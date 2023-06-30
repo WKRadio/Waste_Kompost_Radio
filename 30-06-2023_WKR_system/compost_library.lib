@@ -1,0 +1,1020 @@
+declare name "WKR Compost Library";
+declare author "Luca Spanedda";
+declare version "1.0";
+declare description "2023";
+declare copyright "Copyright (C) 2023 Luca Spanedda <lucaspanedda1995@gmail.com>";
+declare license "MIT license";
+// Import the standard Faust Libraries
+import("stdfaust.lib");
+
+
+/************************************************************************
+************************************************************************
+- BASIC FUNCTIONS -
+************************************************************************
+************************************************************************/
+
+//---------------------------------------------------------------------- MATH --
+// PI Constant
+pi = 3.141592653589793238462643383279502884197169399375105820974944592307816406;
+
+// PI Constant * 2
+twopi = pi * 2;
+
+// Epsilon Constant
+epsilon = 2.2204460492503131e-016;
+
+// MAX Constant
+maximum = 1.7976931348623158e+308;
+
+// MIN Constant
+minimum = 2.2250738585072014e-308;
+
+// only decimal pass
+decimal(x) = x - int(x);
+
+// only integer pass
+integer(x) = int(x);
+
+// shift in phase (0 to 1) giving only the fractional part of x
+wrap(ph, x) = ((x + ph) : \(y).(y - int(y)));
+// process = os.phasor(1, 400) <: _, wrap(.5);
+
+// Sine window function
+sine(ph) =   sin(ph * 2 * pi);
+
+// Cosine window function
+cosine(ph) = cos((ph + .25) * 2 * pi);
+// process = os.phasor(1, 400) <: sine, cosine;
+
+// Hann window function
+hann(ph) = sin(pi * ph) ^ 2.0;
+//process = os.phasor(1, 100) <: hann, hann(wrap(.5));
+
+// Sinc window function
+sinc(power, ph) = (sin(twopi * ph * power) / sin(twopi * ph) / power);
+// process = (os.phasor(1, 122) : sinc(800)), (os.phasor(1, 120) : sinc(800));
+
+// TanH window function
+tanh(g, ph) = ma.tanh(ph * g);
+// process = os.osc(200) : tanh(100);
+
+// triangular function
+triangular(ph) = abs(ma.frac((ph - .5)) * 2.0 - 1.0);
+// process = os.phasor(1, 100) : triangular;
+
+// softclipping via hyperbolic tangent function
+saturator(lim, x) = lim * tanh(1, x / (max(lim, ma.EPSILON)));
+//process = os.osc(200) : saturator(10);
+
+// random: hange the seed value for generate a different random number
+random(seed)  = ((seed*(1103515245)))/2147483647.0;
+// process = random(12);
+
+// index of the primes numbers
+
+primeNumbers(index) = ba.take(index , list)
+    with{
+        primes = component("primes.dsp").primes;
+        list = primes;
+        };
+//process = primeNumbers(12);
+
+//--------------------------------------------------------------------- BASIC --
+// limit function for library and system
+limit(maxl, minl, x) = max(minl, min(maxl, x));
+//process = os.osc(200) : limit(.5, -.5);
+
+// see signal values 
+inspect(i, lower, upper) = _ : 
+    (_ <: _, vbargraph("%i [style:numerical]", lower, upper) : attach);
+//process = (os.osc(.01) : inspect(1, -1, 1));
+
+// binary selector 0 - 1
+selector(sel, x, y) = ( x * (1 - sel) + y * (sel) );
+//process = selector(1, 10, 20);
+
+//----------------------------------------------------------- INTERPOLATIONS ---
+linInterpolate(x0, x1, delta) = x0 + delta * (x1-x0);
+siglinInterpol(order, x) = x : seq(r, order, interpolate)
+with{
+    interpolate(y) = y + .5 * (y' - y);
+};
+
+bilinInterpolate(x0, x1, x0b, x1b, dt1, dt2) = 
+    linInterpolate(
+        linInterpolate(x0, x1, dTG1), 
+        linInterpolate(x0b, x1b, dTG1),
+        dt2)
+    with{
+        linInterpolate(x0, x1, delta) = x0 + delta * (x1-x0);
+    };
+// dTG1 = hslider("dt1",0,0,1,.001);
+// dTG2 = vslider("dt2",0,0,1,.001);
+// osc1 = (os.phasor(1,200) - .5) * 2;
+// osc2 = ((os.phasor(1,200) > .5) - .5) * 2;
+// osc3 = os.lf_triangle(200);
+// osc4 = os.osc(200);
+// process =   bilinInterpolate(osc1, osc2, osc3, osc4, dTG1, dTG2) : 
+//             siglinInterpol(4, _) ;
+
+//--------------------------------------------------------------- COVERSIONS ---
+// Conversions Formula: dB to a linear gain (0-1) and linear to dB
+linear2dB(G) = 20.0 * log10(max (ma.MIN, G));
+
+// linear to dB
+dB2linear(G) = pow(10.0, G/20.0);
+
+// milliseconds to samples
+ms2samp(t) = (t / 1000) * ma.SR;
+
+// seconds to samples
+sec2samp(t) = t * ma.SR;
+
+// (samps) = give tot. samples we want to know in milliseconds
+samps2ms(samps) = ((1000/ma.SR) * samps) : int;
+
+// (meters) = give a distance in meters for samples of the filter
+meters2samps(meters) = ((ma.SR/1000.) * ((1000*meters)/343.1) * 2);
+
+// (samps,seconds) = give: samples of the filter, seconds we want for t60 decay
+T60samps(samps, seconds) = 1/(10^((3*(((1000 / ma.SR)*samps)/1000))/seconds));
+
+// (ms,seconds) = give: ms delay of the filter, seconds we want for t60 decay
+T60ms(ms,seconds) = 1/(10^((3*(ms/1000))/seconds));
+
+
+/************************************************************************
+************************************************************************
+- SIGNALS GENERATION -
+************************************************************************
+************************************************************************/
+
+// Dirac Impulse at Compile Time
+dirac = 1-1';
+
+// pseudo-random noise with linear congruential generator (LCG)
+noise(initSeed) = LCG ~ _ : (_ / m)
+with{
+    // initSeed = an initial seed value
+    a = 18446744073709551557; // a large prime number, 
+        // such as 18446744073709551557
+    c = 12345; // a small prime number, such as 12345
+    m = 2 ^ 31; // 2.1 billion
+    // linear_congruential_generator
+    LCG(seed) = ((a * seed + c) + (initSeed - initSeed') % m);
+};
+
+// noise with prime numbers seed
+primeNoise(index) = primeNumbers(index+1) : noise;
+
+// Stochastic Velvet Noise 
+// unpredictable pulses dependent on an exponential curve on noise
+// exponent for the curve, seed for the noise, ph 0 to 1
+SVNoise(exponent, seed, ph) = circuit(exponent, seed, ph) 
+with{
+    noise(index) = (+ (index)~ * (1103515245)) / 2147483647;
+    exponentialcurve(exponent,ph) = exponent ^ ((ph-.5) * 2) / exponent;
+    comparator(exponent, ph, x) =  abs(x) > 
+        ( (exponentialcurve(exponent,ph) * -1) +1) : \(z).(z > z');
+    circuit(exponent, seed, ph) =  (ph > 0) *
+        noise(seed) : comparator(exponent, ph);
+};
+//process =   SVNoise(100, 1429, hslider("SVNoiseph",0,0,1,.001));
+
+// ramp generator: frequency, ramp in ms.
+ramp(ms,trig) = (1000/ms)/ma.SR : + ~ _ * (1-trig) : \(x).( (x < 1) * x );
+
+// pulse train (1 sample)
+pulse(f) = f/ma.SR : + ~ \(x).( (x < 1) * x ) : \(y).( y < y' ) + (1-1');
+
+// classic phasor
+phasor(f) = (f / ma.SR) : (+ : decimal) ~ _ ;
+
+// phasor with phase reset
+phasorPH(f, trig) = (f/ma.SR):(+ :\(x).(selector(trig,x,0)) :\(x).(x-int(x)))~_ ;
+
+// phasor with scattering of the phase when triggered (out 1),
+// and splice of the phase = the trigger dimension (out 2)
+// splicePH(fph, fsah, seed, width) = 
+//     abs( SAH( (1 - pwm(fsah, width)) , 
+//     noise(seed)) ) + 
+//         phasor(fph) : decimal <: _, _ * pwm(fsah, width); 
+// outputs: classic, PWM
+// splicephasor(fph, fsah, seed) = splicePH(fph, fsah, seed, .5) : _, !;
+// splicepwm(fph, fsah, seed, width) = splicePH(fph, fsah, seed, width) : !, _;
+
+// phasor with scattering of the phase when triggered (out 1),
+// and splice of the phase = the trigger dimension (out 2)
+splicePH(frequency, noise, trigger) =
+                                             ( PhasorPH(frequency,0) ),
+        ( ((trigger*-1) + 1, primeNoise(noise)) : SAH : abs ):
+        \(x,y).(
+                    // out phasor + noise->SAH when triggered
+                    (x+y : \(z).(z-int(z))),
+                    // out phasor + noise->SAH * trigger
+                    (x+y : \(z).(z-int(z)) * trigger)
+                );
+
+// sawtooth
+saw(f) = (( (phasor(f) * -1) + 1) - .5) * 2;
+//process = saw(100);
+
+// sawtooth II
+sawII(f) = ((phasor(f) - .5) * 2);
+//process = sawII(100);
+
+// sinusoidal oscillator
+sinusoid(f) = phasor(f) : sine;
+//process = sinusoid(100);
+
+// sinusoidal oscillator M
+sinusoidM(f) = phasor(f) * .5 : (sine - .5) * 2;
+//process = sinusoidM(100);
+
+// sinusoidal oscillator W
+sinusoidW(f) = phasor(f) * .5 : (cosine + .5) * 2;
+//process = sinusoidW(100);
+
+// square
+square(f) = ((phasor(f) > .5) - .5) * 2;
+//process = square(100);
+
+// PW Square, (PW = 0 to 1)
+pwsquare(f, pw) = ((Phasor(f) * -1) + pw) > 0;
+// PWM square - PWM control from -1 to +1
+pwmsquare(f,pwm) = ((((phasor(f) - .5) * 2) + pwm > 0) - .5) * 2;
+//process = pwmsquare(100, 0);
+
+// triangular
+triangular(f) = phasor(f) : (triangle - .5) * 2;
+//process = triangular(100);
+
+// button counter
+buttoncounter(N) = button("PRGRMChange") : \(x).((x - x') > 0 : (+ ~ _ )%(N));
+
+
+/************************************************************************
+************************************************************************
+- CHAOTIC OSCILLATORS -
+************************************************************************
+************************************************************************/
+
+/*
+Logistic Map
+*/
+logisticmap(x0,r) = circuit ~ _
+    with {
+        circuit(y) = (x0-x0') + y * r * (1 - y);
+    };
+// process = (.8, 3.99991) : logisticmap -.5 : \(x).(x,x);
+
+/*
+Sine Map
+*/
+sinemap(x0,s) = circuit ~ _
+    with {
+        circuit(x) = (x0-x0') + s * sin(ma.PI * x);
+    };
+// process = (.5,.9992) : sinemap -.5 : \(x).(x,x);
+
+henonmap(a,b) = circuit ~ _
+    with {
+        circuit(x) = 1 - (a * (x * x)) + (b * x');
+    };
+//process = (1.4,0.3) : henonmap : \(x).(x,x);
+
+/*
+First Return Map
+*/
+firstreturnmap(x0,u) = circuit ~ _
+    with {
+        circuit(x) = (x0-x0') + 4 * u * x * (1 - x);
+    };
+// process = (.5,.9992) : firstreturnmap;
+
+/*
+Collatz conjecture
+*/
+collatz(x0) = circuit ~ _
+    with {
+        circuit(w) = (x0 - x0') + w :
+                        \(x).((x%(2) == 0) * x, (x%(2) == 1) * x) :
+                            \(odd,even).(odd/2,(even*3)+((even>0))) :> +;
+    };
+// process = sin( (collatz(139489332) * ma.PI));
+
+/*
+Bernoulli Shift
+*/
+bernoulli(x0) = circuit ~ _ : \(z).(z-int(z))
+    with {
+        circuit(x) = (x0 - x0') + (x * 2.0);
+    };
+// process = bernoulli(.1324);
+
+/*
+Lorenz Model
+*/
+lorenz(x0,y0,z0,sigma,rho,beta,dt,q) = circuit ~ si.bus(3)
+    with {
+        circuit(x,y,z) =
+            ( (x+ (sigma*(y-x))*dt) * q )+ (x0-x0'),
+            ( (y+ (rho*x -(x*z) -y) * dt)*q )+ (y0-y0'),
+            ( (z+ ((x*y)-(beta*z)) * dt)*q )+ (z0-z0');
+    };
+/*
+process =   (1.2,1.3,1.6, 10.0,28,2.666667,.005, 1.0) :
+                lorenz : \(x,y,z).(x+y+z)/100 : \(x).(x,x);
+                */
+
+/*
+Van Der Pol Oscillator
+*/
+vanderpol(x0,y0,u,dt,epsilon) = circuit ~ si.bus(2)
+    with {
+        circuit(x,y) =
+            ( x + (u * (x - x ^ 3 / 3 - y) * dt) ) + (x0-x0'),
+            ( y + (x / max(u,epsilon) ) * dt ) + (y0-y0');
+    };
+/*
+process = (1,1, 1.0,0.01,2.2204460492503131e-016) :
+            vanderpol : \(x,y).(x/4,y/4);
+            */
+
+/*
+Chua Oscillator
+*/
+chua(x0,y0,z0,k,a,b,alpha,beta,gamma,dt) = circuit ~ si.bus(3)
+    with {
+        f(x) = b * x + .5 * (a-b) * (abs(x + 1) - abs(x - 1));
+        circuit(x,y,z) =
+            (x0-x0' + x + k *( alpha * (y - x - f(x))) * dt),
+            (y0-y0' + y + k *( (x - y + z)) * dt),
+            (z0-z0' + z + k *(-beta * y - gamma * z) * dt);
+    };
+/*
+process =   (1.16346, -0.0972335, -0.905656, 1, -1.14286,
+            -0.714286, 15.6, 28.58, 0, 0.01) :
+                chua : \(x,y,z).(x+y+z)/3 : \(x).(x,x);
+                */
+
+
+/*
+for more models serch:
+    -Dyadic transformation
+    -Gauss iterated map
+    -Bogdanov map
+    -Brusselator
+    -Lotka-Volterra
+    -Duffing Oscillator
+    -Hindmarsh–Rose neuron model
+*/
+
+
+/************************************************************************
+************************************************************************
+- FILTERS -
+************************************************************************
+************************************************************************/
+
+//-------------------------------------------- DELAY with FB 1 sample Correction
+DEL(del, x) = x@(del - 1);
+
+//--------------------------------------------- ONEZERO FILTER (FIR of I° Order)
+// (g) = give amplitude 0-1(open-close) to the delayed signal 
+// (g) = +1 lowpass, (g) = -1 highpass
+ozf(g, x) = (x' * g), x :> +;
+//process = no.noise : ozf(hslider("HP/LP",0, -1, +1, .001));
+
+//--------------------------------------- ONEPOLE FILTER (IIR of 1 sample delay)
+// (g) = give amplitude 1-0(open-close) for the lowpass cut
+opf(g, x) = x * g : + ~ (_ : * (1 - g));
+// smooth function (Onepole Filter)
+smooth(G) = *(1-G) : + ~ *(G);
+// only the pole section
+pole(g) = + ~ * (g);
+//process = no.noise : opf(.01);
+//process = no.noise * .001 : op(.99);
+
+// With Frequency Cut
+// (G)  = give amplitude 1-0 (open-close) for the lowpass cut
+// (CF) = Frequency Cut in HZ
+onepole(CF, x) = loop ~ _ 
+    with{
+        g(x) = x / (1.0 + x);
+        G = tan(CF * ma.PI / ma.SR):g;
+        loop(y) = x * G + (y * (1 - G));
+        };
+//process = no.noise : onepole(10);
+
+// With Tau Decay
+OPFtau(tau, x) = fb ~ _ 
+with {  
+    fb(y) = (1.0 - s) * x + s * y; 
+    s = exp(-1.0/(tau * ma.SR));
+    //   tau = desired smoothing time constant in seconds
+};
+
+//------------------------------------ FEEDFORWARD COMB FILTER (FIR of N° Order)
+// (t, g) = delay time in samples, filter gain 0-1
+ffcf(t, g, x) = (x@(t) * g), x :> +;
+//process = no.noise * .1 : ffcf(100, 1);
+
+//--------------------------------------- FEEDBACK COMB FILTER (FIR of N° Order)
+// (del, g) = DEL=delay time in samples. G=feedback gain 0-1
+fbcf(del, g, x) = loop ~ _ 
+    with {
+        loop(y) = x + y@(del - 1) * g;
+    };
+//process = no.noise * .1 : fbcf(4480, .9);
+
+//------------------------------- LOWPASS FEEDBACK COMB FILTER (FIR of N° Order)
+// LPFBC(Del, FCut) = give: delay samps, -feedback gain 0-1-, lowpass Freq.Cut HZ
+lpfbcf(del, cf, x) = loop ~ _ : !, _
+    with {
+        onepole(CF, x) = loop ~ _ 
+            with{
+                g(x) = x / (1.0 + x);
+                G = tan(CF * ma.PI / ma.SR):g;
+                loop(y) = x * G + (y * (1 - G));
+            };
+        loop(y) = x + y@(del - 1) <: onepole(cf), _;
+    };
+//process = _ * .1 : lpfbcf(2000, 10000);
+
+//--------------------------------------------------------------- ALLPASS FILTER
+// (t, g) = give: delay in samples, feedback gain 0-1
+apf(del, g, x) = x : (+ : _ <: @(del  - 1), *(g))~ *(-g) : mem, _ : + : _;
+
+APFnest(del, g, y) = _ : (+ : _ <: @(del  - 1), * (g))~ y *(-g) : mem, _ : + : _;
+// process = _ : 
+//     nestapf(ms2samp(40), .5, 
+//         nestapf(ms2samp(30), .5, 
+//             nestapf(ms2samp(20), .75, _)));
+
+// Allpass Filters Lattice 
+// parallel, sequency, min. of distribution, max. of distribution, par offset, allpasses gain
+apfLattice(columns, rows, minN, maxN, verticalOffset, g) = APFgrid
+with{
+    rangeN = maxN - minN;
+    step = rangeN / rows;
+    primesNum(i) = ba.take(i, component("primes.dsp").primes);
+    ms2samp(t) = (t / 1000) * ma.SR;
+    APF(del, g, x) = x : (+ : _ <: @(del  - 1), *(g))~ *(-g) : mem, _ : + : _;
+    APFgrid = 
+        par(j, columns, 
+                seq(i, rows, 
+                    APF( primesNum(int(i * step + minN + j * verticalOffset)) : ms2samp, g) 
+                )
+        );
+    };
+
+//----------------------------------------------------- MODULATED ALLPASS FILTER
+// Modulated Allpass filter
+modapf(delsamples, samplesmod, freqmod, apcoeff) = ( + : _ <: 
+    delayMod(delsamples, samplesmod, freqmod),
+    * (apcoeff))~ * (-apcoeff) : mem, _ : + : _
+    with{
+        delayMod(samples, samplesMod, freqMod, x) = delay
+        with{
+            unipolarMod(f, samples) = ((os.osc(f) + 1) / 2) * samples;
+            delay = x : de.fdelay(samples, samples - unipolarMod(freqMod, samplesMod));
+        };
+    };
+//process = 1-1' : +@(ma.SR/100) ~ _ <: _, modapf(1000, 500, .12, .5);
+
+//---------------------------------------------------------------------- SVF TPT
+// SVFTPT filter function
+// TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+SVFTPT(Q, cf, x) = loop ~ si.bus(2) : (! , ! , _ , _ , _ , _ , _)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        R = 1.0 / (2.0 * Q);
+        G1 = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        G2 = 2.0 * R + g;
+        loop(s1, s2) = u1 , u2 , lp , hp , bp * 2.0 * R , x - bp * 4.0 * R , bp
+            with {
+                hp = (x - s1 * G2 - s2) * G1;
+                v1 = hp * g;
+                bp = s1 + v1;
+                v2 = bp * g;
+                lp = s2 + v2;
+                u1 = v1 + bp;
+                u2 = v2 + lp;
+            };
+    };
+
+LPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (_ , ! , ! , ! , !);
+
+HPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , _ , ! , ! , !);
+
+BPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , _ , ! , !);
+
+NotchSVF(Q, cf, x) = x - BPSVF(Q, cf, x);
+
+APSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , _ , !);
+
+PeakingSVF(Q, cf, x) = LPSVF(Q, cf, x) - HPSVF(Q, cf, x);
+
+BP2SVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , ! , _);
+
+BPBWSVF(BW, CF, x) = BPSVF(limit(20000, minimum, (CF / BW)), CF, x);
+// process = BPBWSVF(10, 1000, noise(1234));
+
+// Usa .707 come Q per LP e HP. BPSVF è quello normalizzato.
+//process = no.noise : BPSVF(10, 1000);
+
+// Zavalishin's SVF BP FILTER
+// optimized BP from the TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+BPSVFTPT(glin, bw, cf, x) = loop ~ si.bus(2) : (! , ! , _)
+    with {
+        g = tan(cf * ma.PI * (1.0/ma.SR));
+        Q = cf / max(ma.EPSILON, bw);
+        R = 1.0 / (Q + Q);
+        G = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        loop(s1, s2) = u1 , u2 , bp * glin
+            with {
+                bp = (g * (x - s2) + s1) * G;
+                bp2 = bp + bp;
+                v2 = bp2 * g;
+                u1 = bp2 - s1;
+                u2 = v2 + s2;
+            };
+    };
+
+//------------------------------------------------------------------ ONEPOLE TPT
+// Zavalishin Onepole TPT Filter
+// TPT version of the One-Pole Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+onePoleTPT(cf, x) = loop ~ _ : ! , si.bus(3)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        G = g / (1.0 + g);
+        loop(s) = u , lp , hp , ap
+            with {
+            v = (x - s) * G; u = v + lp; lp = v + s; hp = x - lp; ap = lp - hp;
+            };
+    };
+
+// Lowpass  TPT
+LPTPT(cf, x) = onePoleTPT(cf, x) : (_ , ! , !);
+
+// Highpass TPT
+HPTPT(cf, x) = onePoleTPT(cf, x) : (! , _ , !);
+
+// Allpass TPT
+APTPT(cf, x) = onePoleTPT(cf, x) : (!, !, _);
+
+//-------------------------------------------------------------- BUTTERWORTH ---
+butterworthQ(order, stage) = qFactor(order % 2)
+    with {
+        qFactor(0) = 1.0 / (2.0 * cos(((2.0 * stage + 1) *
+        (ma.PI / (order * 2.0)))));
+        qFactor(1) = 1.0 / (2.0 * cos(((stage + 1) * (ma.PI / order))));
+    };
+
+LPButterworthN(1, cf, x) = LPTPT(cf, x);
+LPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, LPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : LPTPT(cf) : seq(i, (N - 1) / 2,
+        LPSVF(butterworthQ(N, i), cf));
+    };
+// process = LPButterworthN(4, 1000, noise(1234));
+
+HPButterworthN(1, cf, x) = HPTPT(cf, x);
+HPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, HPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : HPTPT(cf) : seq(i, (N - 1) /
+        2, HPSVF(butterworthQ(N, i), cf));
+    };
+// process = HPButterworthN(4, 10000, noise(1234));
+    
+//------------------------------------------------------------------- DC BLOCKER
+// https://ccrma.stanford.edu/~jos/fp/DC_Blocker.html
+dcblocker(x) = x : ozf(-1) : pole(0.998);
+
+
+/************************************************************************
+************************************************************************
+- AUDIO INFORMATION PROCESSING -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------------------- MAX PEAK ---
+// references: 1, 2
+// Peak Max with IIR filter and max comparison
+peakmax(x) = loop ~_
+with{
+    loop(y) = abs(x) , y : max;
+};
+//process = _ : peakmax;
+
+//--------------------------------------------------- MAX PEAK NORMALIZATION ---
+// references: 5
+// Peak Max Normalization
+fixedNorm(x) = 1 / (x : loop ~ _) * x
+with{
+    loop(y,z) = ( (y, abs(z) ) : max);
+};
+//process = _ * .2 : fixedNorm;
+
+//--------------------------------------------------- PEAK ENVELOPE FOLLOWER ---
+// references: 1, 2
+// Peak Envelope Follower with t60 Decay
+peakenvelope(t60, x) = abs(x) <: loop ~ _ * rt60(t60)
+    with{
+        loop(y,z) = y, z : max;
+        rt60(t) = 0.001 ^ ((1/ma.SR) / t);
+    };
+//process = peakenvelope(10);
+
+//---------------------------------------------- PEAK ENVELOPE NORMALIZATION ---
+// Fixed Peak Normalization with Decay
+peakNorm(seconds, x) = 1 / peakenvelope(seconds, x) * x;
+
+//----------------------------------------- MOVING AVERAGE ENVELOPE FOLLOWER ---
+movingAverage(seconds, x) = x - x@(seconds * ma.SR) : 
+    fi.pole(1.0) / (seconds * ma.SR);
+//process = _ * 10 : movingAverage(1);
+
+//------------------------------------------------------- MOVING AVERAGE RMS ---
+movingAverageRMS(seconds, x) = sqrt(max(0, movingAverage(seconds, x ^ 2)));
+//process = movingAverageRMS(1);
+
+//----------------------------------------------- ATTACK DECAY - RMS AVERAGE ---
+// references: 3
+RMS(att, rel, x) = loop ~ _ : sqrt
+    with {
+        loop(y) = (1.0 - coeff) * x * x + coeff * y
+            with {
+                attCoeff = exp(-2.0 * ma.PI * ma.T / att);
+                relCoeff = exp(-2.0 * ma.PI * ma.T / rel);
+                coeff = ba.if(abs(x) > y, attCoeff, relCoeff);
+            };
+    };
+//process = os.osc(200) : RMS(10, 10);
+
+//----------------------------------------- ATTACK DECAY - RMS NORMALIZATION ---
+RMSNorm(att, dec, target, delSec, x) = 
+    (target / max(.000001, RMS(att, dec, x))) * 
+        x@(ma.SR * delSec);  
+//process = os.osc(200) * 100 : RMSNorm(1, 1, .1, 1); 
+
+//-------------------------------------------------------------- PEAK HOLDER ---
+/*
+peakHolder(secondsPeriod, x) = y
+    letrec {
+        'y = ba.if(reset, abs(x), max(y, abs(x)));
+    }
+        with {
+            reset = os.phasor(1, 1.0 / secondsPeriod) : \(x).(x < x');
+        };
+*/
+
+// holdTime in Seconds
+peakHolder(holdTime, x) = loop ~ si.bus(2) : ! , _
+with {
+    loop(timerState, outState) = timer , output
+    with {
+        isNewPeak = abs(x) >= outState;
+        isTimeOut = timerState >= (holdTime * ma.SR - 1);
+        bypass = isNewPeak | isTimeOut;
+        timer = ba.if(bypass, 0, timerState + 1);
+        output = ba.if(bypass, abs(x), outState);
+    };
+};
+//process = _ : peakHolder(2);
+
+//------------------------------------------------------- LOOKAHEAD LIMITING ---
+// references: 1, 4
+// peak-hold module with an exponential decay curve
+peakHoldwDecay(holdSeconds, frequencyCut, decayT60, x) = 
+    x : peakHolder(holdSeconds) : 
+        LPTPT(frequencyCut) : peakenvelope(decayT60);
+
+lookaheadLimiter(threshold, x) = ( x : peakHoldwDecay(.1, 1/.1, 10) ) : 
+    ( threshold / max(ma.EPSILON, _) ) *
+        x @ (.1 * ma.SR); 
+//process = _ * 100 : RMSNorm(10, 10, .10, 10) : lookaheadLimiter(.8);
+
+//------------------------------------------------------------ PITCH TRACKER ---
+// averaging function with 2pi time constant; t is the averaging time in seconds
+avg(t, x) = y
+    letrec {
+        'y = x + alpha * (y - x);
+    }
+        with {
+            alpha = exp((-2.0 * ma.PI * ma.T) / t);
+        };
+
+// zero-crossing indicator function
+zeroCrossing(x) = (x * x') < 0;
+
+// zero-crossing rate
+zeroCrossingRate(t, x) = zeroCrossing(x) : avg(t);
+
+// pitch tracker as zero-crossing rate of self-regulating lowpassed inputs
+// we highpass the input to avoid infrasonic
+// components to affect the measurements
+// we then clip the lowpass cutoff to improve stability
+pitchTracker(t, x) = loop ~ _
+    with {
+        loop(y) = fi.lowpass(4, max(80, y), xHighpassed) :
+                  (zeroCrossingRate(t) * ma.SR * .5)
+            with {
+                xHighpassed = fi.highpass(1, 20, x);
+            };
+    };
+//process = os.osc(1000) : pitchTracker(.5);
+
+//---------------------------------------------------------------- LOCAL MAX ---
+localMax(seconds, x) = loop ~ si.bus(4) : _ , ! , ! , !
+with {
+    loop(yState, timerState, peakState, timeInSamplesState) = 
+        y , timer , peak , timeInSamples
+    with {
+        timeInSamples = ba.if(reset + 1 - 1', limit(1000, 0, seconds) * 
+            ma.SR, timeInSamplesState);
+        reset = timerState >= (timeInSamplesState - 1);
+        timer = ba.if(reset, 1, timerState + 1);
+        peak = max(abs(x), peakState * (1.0 - reset));
+        y = ba.if(reset, peak', yState);
+    };
+};
+// process = localMax(4);
+
+//---------------------------------------------------------- SAMPLE AND HOLD ---
+// SAH circuit
+SAH(ph, y) = \(FB).( selector( ph : \(x).(x < x'), FB, y ) )~ _ ;
+
+// SAH with internal trigger
+SAH2(f, y) = \(FB).( selector( phasor(f) : \(x).(x < x'), FB, y ) )~ _ ;
+
+
+/************************************************************************
+************************************************************************
+- READ & WRITE TABLES -
+************************************************************************
+************************************************************************/
+
+//------------------------------------------------------- GRANULAR SAMPLING ---
+granular_sampling(k, N, bufSec, x) = triggerArray(N, rate) : 
+    par(i, N, grain(bufSec, position, duration, x)) :> _
+with {
+        grain(L, position, duration, x, trigger) = hann(phase) * 
+            buffer(readPtr, x)
+        with {
+            maxLength = L * 192000;
+            length = L * ma.SR;
+            hann(ph) = sin(ma.PI * ph) ^ 2.0;
+            lineSegment = loop ~ si.bus(2) : _ , ! , _
+            with {
+                loop(yState, incrementState) = y , increment , ready
+                with {
+                    ready = ((yState == 0.0) | (yState == 1.0)) & trigger;
+                    y = ba.if(ready, increment, min(1.0, yState + increment));
+                    increment = ba.if(
+                            ready, (1.0/ma.SR) / max((1.0/ma.SR), duration), 
+                                incrementState);
+                };
+            };
+            phase = lineSegment : _ , !;
+            unlocking = lineSegment : ! , _;
+            lock(param) = ba.sAndH(unlocking, param); 
+            grainPosition = lock(position);
+            grainDuration = lock(duration);
+            readPtr = grainPosition * length + phase * grainDuration * ma.SR;
+            buffer(readPtr, x) = 
+                it.frwtable(3, maxLength, .0, writePtr, x, readPtrWrapped)
+            with {
+                writePtr = ba.period(length);
+                readPtrWrapped = ma.modulo(readPtr, length);
+            };
+        };
+
+        // works for N >= 2
+        triggerArray(N, rate) = loop ~ si.bus(3) : (! , ! , _) <: 
+            par(i, N, == (i)) : par(i, N, \(x).(x > x'))
+        with {
+            loop(incrState, phState, counterState) = incr , ph , counter
+            with {
+                init = 1 - 1';
+                trigger = (phState < phState') + init;
+                incr = ba.if(trigger, rate * (1.0/ma.SR), incrState);
+                ph = ma.frac(incr + phState);
+                counter = (trigger + counterState) % N;
+            };
+        };
+
+        // pseudo-random noise with linear congruential generator (LCG)
+        noise(initSeed) = LCG ~ _ : (_ / m)
+        with {
+            // initSeed = an initial seed value
+            a = 18446744073709551557; // a large prime number, 
+                // such as 18446744073709551557
+            c = 12345; // a small prime number, such as 12345
+            m = 2 ^ 31; // 2.1 billion
+            // linear_congruential_generator
+            LCG(seed) = ((a * seed + c) + (initSeed - initSeed') % m);
+        };
+        rnd(i) = abs(noise(12345 + i * 12345));
+
+        position = 
+            hslider("v: Granular Sampling %k/Buffer Position", 0, 0, 1, .001) * 
+            (1 - (rnd(1) * 
+            hslider("v: Granular Sampling %k/Jitter Position", 0, 0, 1, .001)));
+        rate = 
+            hslider("v: Granular Sampling %k/Density Hz", 20, 1, 100, .001) * 
+            (1 - (rnd(2) * 
+            hslider("v: Granular Sampling %k/Jitter Density", 0, 0, 1, .001)));
+        duration = 
+            hslider("v: Granular Sampling %k/Duration Sec.", .1, .001, 1, .001) * 
+            (1 - (rnd(3) * 
+            hslider("v: Granular Sampling %k/Jitter Dur.", 0, 0, 1, .001))); 
+    };
+//process = hgroup("granulators", (granular_sampling(1, 10, 10), granular_sampling(2, 10, 10)));
+
+//--------------------------------------------- TIMESTRETCHING (OLA 2 HEADS) ---
+// Timestretcher - sum of the 2 Head Reads
+// Bufpos = 0 to 1 signals for the reads
+timeStretcher(bufferMax, bufferSec, record, readSection, readOffset, readStretch, readJitter, grainDimMs, i, x) = x <: head1 + head2 
+with{
+    offset = 2;
+    // tableMax = table Max Dimension - 10 Seconds
+    tableMax = 192000 * bufferMax + offset;
+
+    // Phasor Function
+        LetrecPhasor(f) = Xn
+            letrec{
+                'Xn = (Xn+(f/ma.SR)) : frac;
+            };
+
+    frac(x) = x-floor(x);
+    // read section
+    // stretchFactor - 0 Normal / 1 Extreme stretch (Freeze)
+        stretch = LetrecPhasor( (1/bufferSec) - readStretch)
+            * readSection;
+    // Jitter Amount in the position for the reads
+    rnd = abs(noise(10667 * (i + 1)));
+    jitter = rnd * readJitter;
+    // position in the Buffer for the Reads
+    cntrlRead = (readOffset+stretch)-jitter : frac;
+    // L = buffer dimension in seconds
+    L = ma.SR * bufferSec;
+    // Write index - ramp 0 to L
+    wIdx = offset + ((+(1) : %(L)) ~ _) * record : int <: 
+        attach(_, _/L : hbargraph("[0]Write-Head %i",0,1));
+    buffer(p, x) = it.frwtable(3, tableMax, .0, wIdx, x, p);
+    // Hanning window Equation
+    hann(x) = sin(frac(x) * ma.PI) ^ 2.0;
+    // Grain in Milliseconds
+    grainms = 1000/grainDimMs : si.smoo;
+    // Position of the grain in the Buffer
+    bufPos = cntrlRead <: attach(_, _ : hbargraph("[1]Read-Head %i",0,1));
+    timePhase = offset + (bufPos * L);
+    // two Heads for the read
+    // 0°
+    ph1 = LetrecPhasor(grainms);
+    // 180* 
+    ph2 = ma.frac(.5 + ph1);
+    // Buffer positions = Position in the Buffer + Grain Read
+    pos1 = SAH(ph1, timePhase) + ph1*(ma.SR/grainms);
+    pos2 = SAH(ph2, timePhase) + ph2*(ma.SR/grainms);
+    // Windows + Buffer Reads
+    head1 = hann(ph1) * buffer(pos1);
+    head2 = hann(ph2) * buffer(pos2);
+};
+// process = timeStretcher(1, 1, 1, .1, .5, .1, .01, 80, 1), 
+//     timeStretcher(1, 1, 1, .1, .0, .1, .01, 80, 2);
+
+//----------------------------------------------------------------- SAMPLERS ---
+sampler(memSec, readSpeed, x) =
+    it.frwtable(
+                    3, // interpolation order
+                    192000 * (20), // max.SR * Seconds
+                    .0, // start Point
+                    ba.period(memSec * ma.SR), // writing index
+                    x, // input
+                    phasor(readSpeed/memSec) *
+                      memSec * ma.SR// external Reading index (0-1)
+                );
+
+chunkSampler(memSec, readSpeed, jumpFreq, chunkDim, seed, x) =
+    sampler * squareOut
+        with{
+            square = pwsquare(jumpFreq, chunkDim);
+            reader =  splicePH(readSpeed/memSec, seed, square);
+            readOut = reader : _, !, !;
+            squareOut = reader : !, _, !;
+            sampler =
+                it.frwtable(
+                    3, // interpolation order
+                    192000 * (20), // max.SR * Seconds
+                    .0, // start Point
+                    ba.period(memSec * ma.SR), // writing index
+                    x, // input
+                    readOut * memSec * ma.SR// external Reading index (0-1)
+                );
+        };
+//process = chunkSampler(4, 1, 8, .99, 2), chunkSampler(4, 1, 8, .99, 4);
+
+chunkGrains(voices, memSec, readSpeed, jumpFreq, chunkDim, x)=
+    par(i, voices,
+            chunkSampler(memSec, readSpeed, jumpFreq, chunkDim, i, x/voices)
+        ) :> (+,+);
+//process = _ <: chunkGrains(8, 4, 1, 4, .99);
+//pwg = hslider("slide",0,0,1,.001); ftg = hslider("freq.",0,0,100,.001);
+
+
+/************************************************************************
+************************************************************************
+- NETWORKS -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------- VECTORIAL OPERATIONS ---
+// perform operations on an arbitrary number of vectors
+vecOp(vectorsList, op) =
+    vectorsList : seq(i, vecDim - 1, vecOp2D , vecBus(vecDim - 2 - i))
+    with {
+        vecBus(0) = par(i, vecLen, 0 : !);
+        vecBus(dim) = par(i, dim, si.bus(vecLen));
+        vecOp2D = ro.interleave(vecLen, 2) : par(i, vecLen, op);
+        vecDim = outputs(vectorsList) / vecLen;
+        vecLen = outputs(ba.take(1, vectorsList));
+    };
+
+//----------------------------------------------------------------- MATRIXES ---
+// vector FDN Matrix
+vecMx(N, list) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list), *) :> +));
+
+vecMatrix(N) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+with{
+    list(1) = 1, 0, 0, 0;
+    list(2) = 0, 1, 0, 0;
+    list(3) = 0, 0, 1, 0;
+    list(4) = 0, 0, 0, 1;
+    list(5) = 1, 0, 0, 0;
+    list(6) = 0, 1, 0, 0;
+    list(7) = 0, 0, 1, 0;
+    list(8) = 0, 0, 0, 1;
+};
+//process = vecMatrix(4);
+
+// fully connected FDN Matrix
+fullyconnectedMx(N) =  vecMx(N, par(i, N, 1));
+fullyconnectedMxNormalized(N) =  vecMx(N, par(i, N, 1/N));
+//process = fullyconnectedMxNormalized(4);
+
+// hadamard FDN Matrix
+butterfly(2) = si.bus(2) <: +, -;
+butterfly(N) = si.bus(N) <: ro.interleave(N/2,2), ro.interleave(N/2,2) : par(i, N/2, +), par(i, N/2, -);
+hadamard(2) = butterfly(2);
+hadamard(N) = butterfly(N) : (hadamard(N/2), hadamard(N/2));
+//process = hadamard(8);
+
+// Normalized hadamard FDN Matrix
+hadamardcoeff(N) = par(i, N, 1.0 / sqrt(N)); 
+hadamardNormalized(N) = vecOp((hadamard(N) , hadamardcoeff(N)), *);
+//process = hadamardNormalized(8);
+
+//----------------------------------------------------------------- NETWORKS ---
+FDNfullyconnected(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (fullyconnectedMxNormalized(N));
+//process = FDNfullyconnected(4, 1, 1);
+
+FDNhadamard(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (hadamardNormalized(N));
+//process = FDNhadamard(4, 1, 1);
+
+FDNsingleLoop(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ ro.crossNM(N-1, 1);
+//process = FDNsingleLoop(8, 1, 1);
+
+FDNmatrix(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ (vectorMatrix(N))
+with{
+    vectorMatrix(N) = si.bus(N) <: 
+        par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+    with{
+        list(1) = 1, 0, 0, 0;
+        list(2) = 0, 1, 0, 0;
+        list(3) = 0, 0, 1, 0;
+        list(4) = 0, 0, 0, 1;
+        list(5) = 1, 0, 0, 0;
+        list(6) = 0, 1, 0, 0;
+        list(7) = 0, 0, 1, 0;
+        list(8) = 0, 0, 0, 1;
+    };
+};
+//process = FDNmatrix(4, 1, 1);
