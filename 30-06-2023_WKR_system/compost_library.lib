@@ -1,0 +1,806 @@
+declare name "WKR Compost Library";
+declare author "Luca Spanedda";
+declare version "1.0";
+declare description "2023";
+declare copyright "Copyright (C) 2023 Luca Spanedda <lucaspanedda1995@gmail.com>";
+declare license "MIT license";
+// Import the standard Faust Libraries
+import("stdfaust.lib");
+
+/************************************************************************
+************************************************************************
+- BASIC -
+************************************************************************
+************************************************************************/
+
+// limit function for library and system
+limit(maxl, minl, x) = max(minl, min(maxl, x));
+//process = os.osc(200) : limit(.5, -.5);
+
+// binary selector 0 - 1
+selector(sel, x, y) = ( x * (1 - sel) + y * (sel) );
+//process = selector(1, 10, 20);
+
+// Primes Numbers List
+primes =
+(2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73,
+79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163,
+167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251,
+257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 331, 337, 347, 349,
+353, 359, 367, 373, 379, 383, 389, 397, 401, 409, 419, 421, 431, 433, 439, 443,
+449, 457, 461, 463, 467, 479, 487, 491, 499, 503, 509, 521, 523, 541, 547, 557,
+563, 569, 571, 577, 587, 593, 599, 601, 607, 613, 617, 619, 631, 641, 643, 647,
+653, 659, 661, 673, 677, 683, 691, 701, 709, 719, 727, 733, 739, 743, 751, 757,
+761, 769, 773, 787, 797, 809, 811, 821, 823, 827, 829, 839, 853, 857, 859, 863,
+877, 881, 883, 887, 907, 911, 919, 929, 937, 941, 947, 953, 967, 971, 977, 983,
+991, 997, 1009, 1013, 1019, 1021, 1031, 1033, 1039, 1049, 1051, 1061, 1063,
+1069, 1087, 1091, 1093, 1097, 1103, 1109, 1117, 1123, 1129, 1151, 1153, 1163,
+1171, 1181, 1187, 1193, 1201, 1213, 1217, 1223, 1229, 1231, 1237, 1249, 1259,
+1277, 1279, 1283, 1289, 1291, 1297, 1301, 1303, 1307, 1319, 1321, 1327, 1361,
+1367, 1373, 1381, 1399, 1409, 1423, 1427, 1429, 1433, 1439, 1447, 1451, 1453,
+1459, 1471, 1481, 1483, 1487, 1489, 1493, 1499, 1511, 1523, 1531, 1543, 1549,
+1553, 1559, 1567, 1571, 1579, 1583, 1597, 1601, 1607, 1609, 1613, 1619, 1621,
+1627, 1637, 1657, 1663, 1667, 1669, 1693, 1697, 1699, 1709, 1721, 1723, 1733,
+1741, 1747, 1753, 1759, 1777, 1783, 1787, 1789, 1801, 1811, 1823, 1831, 1847,
+1861, 1867, 1871, 1873, 1877, 1879, 1889, 1901, 1907, 1913, 1931, 1933, 1949,
+1951, 1973, 1979, 1987, 1993, 1997, 1999, 2003, 2011, 2017, 2027, 2029, 2039,
+2053, 2063, 2069, 2081, 2083, 2087, 2089, 2099, 2111, 2113, 2129, 2131, 2137,
+2141, 2143, 2153, 2161, 2179, 2203, 2207, 2213, 2221, 2237, 2239, 2243, 2251,
+2267, 2269, 2273, 2281, 2287, 2293, 2297, 2309, 2311, 2333, 2339, 2341, 2347,
+2351, 2357, 2371, 2377, 2381, 2383, 2389, 2393, 2399, 2411, 2417, 2423, 2437,
+2441, 2447, 2459, 2467, 2473, 2477, 2503, 2521, 2531, 2539, 2543, 2549, 2551,
+2557, 2579, 2591, 2593, 2609, 2617, 2621, 2633, 2647, 2657, 2659, 2663, 2671,
+2677, 2683, 2687, 2689, 2693, 2699, 2707, 2711, 2713, 2719, 2729, 2731, 2741,
+2749, 2753, 2767, 2777, 2789, 2791, 2797, 2801, 2803, 2819, 2833, 2837, 2843,
+2851, 2857, 2861, 2879, 2887, 2897, 2903, 2909, 2917, 2927, 2939, 2953, 2957,
+2963, 2969, 2971, 2999, 3001, 3011, 3019, 3023, 3037, 3041, 3049, 3061, 3067,
+3079, 3083, 3089, 3109, 3119, 3121, 3137, 3163, 3167, 3169, 3181, 3187, 3191,
+3203, 3209, 3217, 3221, 3229, 3251, 3253, 3257, 3259, 3271, 3299, 3301, 3307,
+3313, 3319, 3323, 3329, 3331, 3343, 3347, 3359, 3361, 3371, 3373, 3389, 3391,
+3407, 3413, 3433, 3449, 3457, 3461, 3463, 3467, 3469, 3491, 3499, 3511, 3517,
+3527, 3529, 3533, 3539, 3541, 3547, 3557, 3559, 3571, 3581, 3583, 3593, 3607,
+3613, 3617, 3623, 3631, 3637, 3643, 3659, 3671, 3673, 3677, 3691, 3697, 3701,
+3709, 3719, 3727, 3733, 3739, 3761, 3767, 3769, 3779, 3793, 3797, 3803, 3821,
+3823, 3833, 3847, 3851, 3853, 3863, 3877, 3881, 3889, 3907, 3911, 3917, 3919,
+3923, 3929, 3931, 3943, 3947, 3967, 3989, 4001, 4003, 4007, 4013, 4019, 4021,
+4027, 4049, 4051, 4057, 4073, 4079, 4091, 4093, 4099, 4111, 4127, 4129, 4133,
+4139, 4153, 4157, 4159, 4177, 4201, 4211, 4217, 4219, 4229, 4231, 4241, 4243,
+4253, 4259, 4261, 4271, 4273, 4283, 4289, 4297, 4327, 4337, 4339, 4349, 4357,
+4363, 4373, 4391, 4397, 4409, 4421, 4423, 4441, 4447, 4451, 4457, 4463, 4481,
+4483, 4493, 4507, 4513, 4517, 4519, 4523, 4547, 4549, 4561, 4567, 4583, 4591,
+4597, 4603, 4621, 4637, 4639, 4643, 4649, 4651, 4657, 4663, 4673, 4679, 4691,
+4703, 4721, 4723, 4729, 4733, 4751, 4759, 4783, 4787, 4789, 4793, 4799, 4801,
+4813, 4817, 4831, 4861, 4871, 4877, 4889, 4903, 4909, 4919, 4931, 4933, 4937,
+4943, 4951, 4957, 4967, 4969, 4973, 4987, 4993, 4999, 5003, 5009, 5011, 5021,
+5023, 5039, 5051, 5059, 5077, 5081, 5087, 5099, 5101, 5107, 5113, 5119, 5147,
+5153, 5167, 5171, 5179, 5189, 5197, 5209, 5227, 5231, 5233, 5237, 5261, 5273,
+5279, 5281, 5297, 5303, 5309, 5323, 5333, 5347, 5351, 5381, 5387, 5393, 5399,
+5407, 5413, 5417, 5419, 5431, 5437, 5441, 5443, 5449, 5471, 5477, 5479, 5483,
+5501, 5503, 5507, 5519, 5521, 5527, 5531, 5557, 5563, 5569, 5573, 5581, 5591,
+5623, 5639, 5641, 5647, 5651, 5653, 5657, 5659, 5669, 5683, 5689, 5693, 5701,
+5711, 5717, 5737, 5741, 5743, 5749, 5779, 5783, 5791, 5801, 5807, 5813, 5821,
+5827, 5839, 5843, 5849, 5851, 5857, 5861, 5867, 5869, 5879, 5881, 5897, 5903,
+5923, 5927, 5939, 5953, 5981, 5987, 6007, 6011, 6029, 6037, 6043, 6047, 6053,
+6067, 6073, 6079, 6089, 6091, 6101, 6113, 6121, 6131, 6133, 6143, 6151, 6163,
+6173, 6197, 6199, 6203, 6211, 6217, 6221, 6229, 6247, 6257, 6263, 6269, 6271,
+6277, 6287, 6299, 6301, 6311, 6317, 6323, 6329, 6337, 6343, 6353, 6359, 6361,
+6367, 6373, 6379, 6389, 6397, 6421, 6427, 6449, 6451, 6469, 6473, 6481, 6491,
+6521, 6529, 6547, 6551, 6553, 6563, 6569, 6571, 6577, 6581, 6599, 6607, 6619,
+6637, 6653, 6659, 6661, 6673, 6679, 6689, 6691, 6701, 6703, 6709, 6719, 6733,
+6737, 6761, 6763, 6779, 6781, 6791, 6793, 6803, 6823, 6827, 6829, 6833, 6841,
+6857, 6863, 6869, 6871, 6883, 6899, 6907, 6911, 6917, 6947, 6949, 6959, 6961,
+6967, 6971, 6977, 6983, 6991, 6997, 7001, 7013, 7019, 7027, 7039, 7043, 7057,
+7069, 7079, 7103, 7109, 7121, 7127, 7129, 7151, 7159, 7177, 7187, 7193, 7207,
+7211, 7213, 7219, 7229, 7237, 7243, 7247, 7253, 7283, 7297, 7307, 7309, 7321,
+7331, 7333, 7349, 7351, 7369, 7393, 7411, 7417, 7433, 7451, 7457, 7459, 7477,
+7481, 7487, 7489, 7499, 7507, 7517, 7523, 7529, 7537, 7541, 7547, 7549, 7559,
+7561, 7573, 7577, 7583, 7589, 7591, 7603, 7607, 7621, 7639, 7643, 7649, 7669,
+7673, 7681, 7687, 7691, 7699, 7703, 7717, 7723, 7727, 7741, 7753, 7757, 7759,
+7789, 7793, 7817, 7823, 7829, 7841, 7853, 7867, 7873, 7877, 7879, 7883, 7901,
+7907, 7919, 7927, 7933, 7937, 7949, 7951, 7963, 7993, 8009, 8011, 8017, 8039,
+8053, 8059, 8069, 8081, 8087, 8089, 8093, 8101, 8111, 8117, 8123, 8147, 8161,
+8167, 8171, 8179, 8191, 8209, 8219, 8221, 8231, 8233, 8237, 8243, 8263, 8269,
+8273, 8287, 8291, 8293, 8297, 8311, 8317, 8329, 8353, 8363, 8369, 8377, 8387,
+8389, 8419, 8423, 8429, 8431, 8443, 8447, 8461, 8467, 8501, 8513, 8521, 8527,
+8537, 8539, 8543, 8563, 8573, 8581, 8597, 8599, 8609, 8623, 8627, 8629, 8641,
+8647, 8663, 8669, 8677, 8681, 8689, 8693, 8699, 8707, 8713, 8719, 8731, 8737,
+8741, 8747, 8753, 8761, 8779, 8783, 8803, 8807, 8819, 8821, 8831, 8837, 8839,
+8849, 8861, 8863, 8867, 8887, 8893, 8923, 8929, 8933, 8941, 8951, 8963, 8969,
+8971, 8999, 9001, 9007, 9011, 9013, 9029, 9041, 9043, 9049, 9059, 9067, 9091,
+9103, 9109, 9127, 9133, 9137, 9151, 9157, 9161, 9173, 9181, 9187, 9199, 9203,
+9209, 9221, 9227, 9239, 9241, 9257, 9277, 9281, 9283, 9293, 9311, 9319, 9323,
+9337, 9341, 9343, 9349, 9371, 9377, 9391, 9397, 9403, 9413, 9419, 9421, 9431,
+9433, 9437, 9439, 9461, 9463, 9467, 9473, 9479, 9491, 9497, 9511, 9521, 9533,
+9539, 9547, 9551, 9587, 9601, 9613, 9619, 9623, 9629, 9631, 9643, 9649, 9661,
+9677, 9679, 9689, 9697, 9719, 9721, 9733, 9739, 9743, 9749, 9767, 9769, 9781,
+9787, 9791, 9803, 9811, 9817, 9829, 9833, 9839, 9851, 9857, 9859, 9871, 9883,
+9887, 9901, 9907, 9923, 9929, 9931, 9941, 9949, 9967, 9973, 10007, 10009, 10037,
+10039, 10061, 10067, 10069, 10079, 10091, 10093, 10099, 10103, 10111, 10133,
+10139, 10141, 10151, 10159, 10163, 10169, 10177, 10181, 10193, 10211, 10223,
+10243, 10247, 10253, 10259, 10267, 10271, 10273, 10289, 10301, 10303, 10313,
+10321, 10331, 10333, 10337, 10343, 10357, 10369, 10391, 10399, 10427, 10429,
+10433, 10453, 10457, 10459, 10463, 10477, 10487, 10499, 10501, 10513, 10529,
+10531, 10559, 10567, 10589, 10597, 10601, 10607, 10613, 10627, 10631, 10639,
+10651, 10657, 10663, 10667);
+
+// index of the primes numbers
+primeNumbers(index) = ba.take(index , list)
+    with{
+        list = primes;
+        };
+//process = primeNumbers(12);
+
+
+/************************************************************************
+************************************************************************
+- SIGNALS GENERATION -
+************************************************************************
+************************************************************************/
+
+// pseudo-random noise with linear congruential generator (LCG)
+noise(initSeed) = LCG ~ _ : (_ / m)
+with{
+    // initSeed = an initial seed value
+    a = 18446744073709551557; // a large prime number, 
+        // such as 18446744073709551557
+    c = 12345; // a small prime number, such as 12345
+    m = 2 ^ 31; // 2.1 billion
+    // linear_congruential_generator
+    LCG(seed) = ((a * seed + c) + (initSeed - initSeed') % m);
+};
+
+// classic phasor
+phasor(f) = (f / ma.SR) : (+ : decimal) ~ _ ;
+
+
+/************************************************************************
+************************************************************************
+- FILTERS -
+************************************************************************
+************************************************************************/
+
+//--------------------------------------------- ONEZERO FILTER (FIR of I° Order)
+// (g) = give amplitude 0-1(open-close) to the delayed signal 
+// (g) = +1 lowpass, (g) = -1 highpass
+ozf(g, x) = (x' * g), x :> +;
+//process = no.noise : ozf(hslider("HP/LP",0, -1, +1, .001));
+
+//--------------------------------------- ONEPOLE FILTER (IIR of 1 sample delay)
+// only the pole section
+pole(g) = + ~ * (g);
+//process = no.noise * .001 : op(.99);
+
+//--------------------------------------------------------------- ALLPASS FILTER
+// (t, g) = give: delay in samples, feedback gain 0-1
+apf(del, g, x) = x : (+ : _ <: @(del  - 1), *(g))~ *(-g) : mem, _ : + : _;
+
+// Allpass Filters Lattice 
+// parallel, sequency, min. of distribution, max. of distribution, par offset, allpasses gain
+apfLattice(columns, rows, minN, maxN, verticalOffset, g) = APFgrid
+with{
+    rangeN = maxN - minN;
+    step = rangeN / rows;
+    primesNum(i) = ba.take(i, primes);
+    ms2samp(t) = (t / 1000) * ma.SR;
+    APFgrid = 
+        par(j, columns, 
+                seq(i, rows, 
+                    apf(primesNum(int(i * step + minN + j * verticalOffset)) : ms2samp, g) 
+                )
+        );
+    };
+
+//---------------------------------------------------------------------- SVF TPT
+// SVFTPT filter function
+// TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+SVFTPT(Q, cf, x) = loop ~ si.bus(2) : (! , ! , _ , _ , _ , _ , _)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        R = 1.0 / (2.0 * Q);
+        G1 = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        G2 = 2.0 * R + g;
+        loop(s1, s2) = u1 , u2 , lp , hp , bp * 2.0 * R , x - bp * 4.0 * R , bp
+            with {
+                hp = (x - s1 * G2 - s2) * G1;
+                v1 = hp * g;
+                bp = s1 + v1;
+                v2 = bp * g;
+                lp = s2 + v2;
+                u1 = v1 + bp;
+                u2 = v2 + lp;
+            };
+    };
+
+LPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (_ , ! , ! , ! , !);
+
+HPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , _ , ! , ! , !);
+
+BPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , _ , ! , !);
+
+NotchSVF(Q, cf, x) = x - BPSVF(Q, cf, x);
+
+APSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , _ , !);
+
+PeakingSVF(Q, cf, x) = LPSVF(Q, cf, x) - HPSVF(Q, cf, x);
+
+BP2SVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , ! , _);
+
+BPBWSVF(BW, CF, x) = BPSVF(limit(20000, minimum, (CF / BW)), CF, x);
+// process = BPBWSVF(10, 1000, noise(1234));
+
+// Usa .707 come Q per LP e HP. BPSVF è quello normalizzato.
+//process = no.noise : BPSVF(10, 1000);
+
+// Zavalishin's SVF BP FILTER
+// optimized BP from the TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+BPSVFTPT(glin, bw, cf, x) = loop ~ si.bus(2) : (! , ! , _)
+    with {
+        g = tan(cf * ma.PI * (1.0/ma.SR));
+        Q = cf / max(ma.EPSILON, bw);
+        R = 1.0 / (Q + Q);
+        G = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        loop(s1, s2) = u1 , u2 , bp * glin
+            with {
+                bp = (g * (x - s2) + s1) * G;
+                bp2 = bp + bp;
+                v2 = bp2 * g;
+                u1 = bp2 - s1;
+                u2 = v2 + s2;
+            };
+    };
+
+//------------------------------------------------------------------ ONEPOLE TPT
+// Zavalishin Onepole TPT Filter
+// TPT version of the One-Pole Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+onePoleTPT(cf, x) = loop ~ _ : ! , si.bus(3)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        G = g / (1.0 + g);
+        loop(s) = u , lp , hp , ap
+            with {
+            v = (x - s) * G; u = v + lp; lp = v + s; hp = x - lp; ap = lp - hp;
+            };
+    };
+
+// Lowpass  TPT
+LPTPT(cf, x) = onePoleTPT(cf, x) : (_ , ! , !);
+
+// Highpass TPT
+HPTPT(cf, x) = onePoleTPT(cf, x) : (! , _ , !);
+
+// Allpass TPT
+APTPT(cf, x) = onePoleTPT(cf, x) : (!, !, _);
+
+//-------------------------------------------------------------- BUTTERWORTH ---
+butterworthQ(order, stage) = qFactor(order % 2)
+    with {
+        qFactor(0) = 1.0 / (2.0 * cos(((2.0 * stage + 1) *
+        (ma.PI / (order * 2.0)))));
+        qFactor(1) = 1.0 / (2.0 * cos(((stage + 1) * (ma.PI / order))));
+    };
+
+LPButterworthN(1, cf, x) = LPTPT(cf, x);
+LPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, LPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : LPTPT(cf) : seq(i, (N - 1) / 2,
+        LPSVF(butterworthQ(N, i), cf));
+    };
+// process = LPButterworthN(4, 1000, noise(1234));
+
+HPButterworthN(1, cf, x) = HPTPT(cf, x);
+HPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, HPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : HPTPT(cf) : seq(i, (N - 1) /
+        2, HPSVF(butterworthQ(N, i), cf));
+    };
+// process = HPButterworthN(4, 10000, noise(1234));
+    
+//------------------------------------------------------------------- DC BLOCKER
+// https://ccrma.stanford.edu/~jos/fp/DC_Blocker.html
+dcblocker(x) = x : ozf(-1) : pole(0.998);
+
+
+/************************************************************************
+************************************************************************
+- AUDIO INFORMATION PROCESSING -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------------------- MAX PEAK ---
+// references: 1, 2
+// Peak Max with IIR filter and max comparison
+peakmax(x) = loop ~_
+with{
+    loop(y) = abs(x) , y : max;
+};
+//process = _ : peakmax;
+
+//--------------------------------------------------- MAX PEAK NORMALIZATION ---
+// references: 5
+// Peak Max Normalization
+fixedNorm(x) = 1 / (x : loop ~ _) * x
+with{
+    loop(y,z) = ( (y, abs(z) ) : max);
+};
+//process = _ * .2 : fixedNorm;
+
+//--------------------------------------------------- PEAK ENVELOPE FOLLOWER ---
+// references: 1, 2
+// Peak Envelope Follower with t60 Decay
+peakenvelope(t60, x) = abs(x) <: loop ~ _ * rt60(t60)
+    with{
+        loop(y,z) = y, z : max;
+        rt60(t) = 0.001 ^ ((1/ma.SR) / t);
+    };
+//process = peakenvelope(10);
+
+//---------------------------------------------- PEAK ENVELOPE NORMALIZATION ---
+// Fixed Peak Normalization with Decay
+peakNorm(seconds, x) = 1 / peakenvelope(seconds, x) * x;
+
+//----------------------------------------- MOVING AVERAGE ENVELOPE FOLLOWER ---
+movingAverage(seconds, x) = x - x@(seconds * ma.SR) : 
+    fi.pole(1.0) / (seconds * ma.SR);
+//process = _ * 10 : movingAverage(1);
+
+//------------------------------------------------------- MOVING AVERAGE RMS ---
+movingAverageRMS(seconds, x) = sqrt(max(0, movingAverage(seconds, x ^ 2)));
+//process = movingAverageRMS(1);
+
+//----------------------------------------------- ATTACK DECAY - RMS AVERAGE ---
+// references: 3
+RMS(att, rel, x) = loop ~ _ : sqrt
+    with {
+        loop(y) = (1.0 - coeff) * x * x + coeff * y
+            with {
+                attCoeff = exp(-2.0 * ma.PI * ma.T / att);
+                relCoeff = exp(-2.0 * ma.PI * ma.T / rel);
+                coeff = ba.if(abs(x) > y, attCoeff, relCoeff);
+            };
+    };
+//process = os.osc(200) : RMS(10, 10);
+
+//----------------------------------------- ATTACK DECAY - RMS NORMALIZATION ---
+RMSNorm(att, dec, target, delSec, x) = 
+    (target / max(.000001, RMS(att, dec, x))) * 
+        x@(ma.SR * delSec);  
+//process = os.osc(200) * 100 : RMSNorm(1, 1, .1, 1); 
+
+//-------------------------------------------------------------- PEAK HOLDER ---
+/*
+peakHolder(secondsPeriod, x) = y
+    letrec {
+        'y = ba.if(reset, abs(x), max(y, abs(x)));
+    }
+        with {
+            reset = os.phasor(1, 1.0 / secondsPeriod) : \(x).(x < x');
+        };
+*/
+
+// holdTime in Seconds
+peakHolder(holdTime, x) = loop ~ si.bus(2) : ! , _
+with {
+    loop(timerState, outState) = timer , output
+    with {
+        isNewPeak = abs(x) >= outState;
+        isTimeOut = timerState >= (holdTime * ma.SR - 1);
+        bypass = isNewPeak | isTimeOut;
+        timer = ba.if(bypass, 0, timerState + 1);
+        output = ba.if(bypass, abs(x), outState);
+    };
+};
+//process = _ : peakHolder(2);
+
+//------------------------------------------------------- LOOKAHEAD LIMITING ---
+// references: 1, 4
+// peak-hold module with an exponential decay curve
+PeakHoldwDecay(holdSeconds, frequencyCut, decayT60, x) = 
+    x : peakHolder(holdSeconds) : 
+        LPTPT(frequencyCut) : peakenvelope(decayT60);
+
+LookaheadLimiter(threshold, x) = ( x : PeakHoldwDecay(.1, 1/.1, 10) ) : 
+    ( threshold / max(ma.EPSILON, _) ) *
+        x @ (.1 * ma.SR); 
+//process = _ * 100 : RMSNorm(10, 10, .10, 10) : LookaheadLimiter(.8);
+
+//------------------------------------------------------------ PITCH TRACKER ---
+// averaging function with 2pi time constant; t is the averaging time in seconds
+avg(t, x) = y
+    letrec {
+        'y = x + alpha * (y - x);
+    }
+        with {
+            alpha = exp((-2.0 * ma.PI * ma.T) / t);
+        };
+
+// zero-crossing indicator function
+zeroCrossing(x) = (x * x') < 0;
+
+// zero-crossing rate
+zeroCrossingRate(t, x) = zeroCrossing(x) : avg(t);
+
+// pitch tracker as zero-crossing rate of self-regulating lowpassed inputs
+// we highpass the input to avoid infrasonic
+// components to affect the measurements
+// we then clip the lowpass cutoff to improve stability
+pitchTracker(t, x) = loop ~ _
+    with {
+        loop(y) = fi.lowpass(4, max(80, y), xHighpassed) :
+                  (zeroCrossingRate(t) * ma.SR * .5)
+            with {
+                xHighpassed = fi.highpass(1, 20, x);
+            };
+    };
+//process = os.osc(1000) : pitchTracker(.5);
+
+//---------------------------------------------------------------- LOCAL MAX ---
+localMax(seconds, x) = loop ~ si.bus(4) : _ , ! , ! , !
+with {
+    loop(yState, timerState, peakState, timeInSamplesState) = 
+        y , timer , peak , timeInSamples
+    with {
+        timeInSamples = ba.if(reset + 1 - 1', limit(1000, 0, seconds) * 
+            ma.SR, timeInSamplesState);
+        reset = timerState >= (timeInSamplesState - 1);
+        timer = ba.if(reset, 1, timerState + 1);
+        peak = max(abs(x), peakState * (1.0 - reset));
+        y = ba.if(reset, peak', yState);
+    };
+};
+// process = localMax(4);
+
+//---------------------------------------------------------- SAMPLE AND HOLD ---
+// SAH circuit
+SAH(ph, y) = \(FB).( selector( ph : \(x).(x < x'), FB, y ) )~ _ ;
+
+
+/************************************************************************
+************************************************************************
+- READ & WRITE TABLES -
+************************************************************************
+************************************************************************/
+
+//------------------------------------------------------- GRANULAR SAMPLING ---
+granular_sampling(k, N, bufSec, x) = triggerArray(N, rate) : 
+    par(i, N, grain(bufSec, position, duration, x)) :> _
+with {
+        grain(L, position, duration, x, trigger) = hann(phase) * 
+            buffer(readPtr, x)
+        with {
+            maxLength = L * 192000;
+            length = L * ma.SR;
+            hann(ph) = sin(ma.PI * ph) ^ 2.0;
+            lineSegment = loop ~ si.bus(2) : _ , ! , _
+            with {
+                loop(yState, incrementState) = y , increment , ready
+                with {
+                    ready = ((yState == 0.0) | (yState == 1.0)) & trigger;
+                    y = ba.if(ready, increment, min(1.0, yState + increment));
+                    increment = ba.if(
+                            ready, (1.0/ma.SR) / max((1.0/ma.SR), duration), 
+                                incrementState);
+                };
+            };
+            phase = lineSegment : _ , !;
+            unlocking = lineSegment : ! , _;
+            lock(param) = ba.sAndH(unlocking, param); 
+            grainPosition = lock(position);
+            grainDuration = lock(duration);
+            readPtr = grainPosition * length + phase * grainDuration * ma.SR;
+            buffer(readPtr, x) = 
+                it.frwtable(3, maxLength, .0, writePtr, x, readPtrWrapped)
+            with {
+                writePtr = ba.period(length);
+                readPtrWrapped = ma.modulo(readPtr, length);
+            };
+        };
+
+        // works for N >= 2
+        triggerArray(N, rate) = loop ~ si.bus(3) : (! , ! , _) <: 
+            par(i, N, == (i)) : par(i, N, \(x).(x > x'))
+        with {
+            loop(incrState, phState, counterState) = incr , ph , counter
+            with {
+                init = 1 - 1';
+                trigger = (phState < phState') + init;
+                incr = ba.if(trigger, rate * (1.0/ma.SR), incrState);
+                ph = ma.frac(incr + phState);
+                counter = (trigger + counterState) % N;
+            };
+        };
+
+        // pseudo-random noise with linear congruential generator (LCG)
+        noise(initSeed) = LCG ~ _ : (_ / m)
+        with {
+            // initSeed = an initial seed value
+            a = 18446744073709551557; // a large prime number, 
+                // such as 18446744073709551557
+            c = 12345; // a small prime number, such as 12345
+            m = 2 ^ 31; // 2.1 billion
+            // linear_congruential_generator
+            LCG(seed) = ((a * seed + c) + (initSeed - initSeed') % m);
+        };
+        rnd(i) = abs(noise(12345 + i * 12345));
+
+        position = 
+            hslider("v: Granular Sampling %k/Buffer Position", 0, 0, 1, .001) * 
+            (1 - (rnd(1) * 
+            hslider("v: Granular Sampling %k/Jitter Position", 0, 0, 1, .001)));
+        rate = 
+            hslider("v: Granular Sampling %k/Density Hz", 20, 1, 100, .001) * 
+            (1 - (rnd(2) * 
+            hslider("v: Granular Sampling %k/Jitter Density", 0, 0, 1, .001)));
+        duration = 
+            hslider("v: Granular Sampling %k/Duration Sec.", .1, .001, 1, .001) * 
+            (1 - (rnd(3) * 
+            hslider("v: Granular Sampling %k/Jitter Dur.", 0, 0, 1, .001))); 
+    };
+//process = hgroup("granulators", (granular_sampling(1, 10, 10), granular_sampling(2, 10, 10)));
+
+//--------------------------------------------- TIMESTRETCHING (OLA 2 HEADS) ---
+// Timestretcher - sum of the 2 Head Reads
+// Bufpos = 0 to 1 signals for the reads
+timeStretcher(bufferMax, bufferSec, record, readSection, readOffset, readStretch, readJitter, grainDimMs, i, x) = x <: head1 + head2 
+with{
+    offset = 2;
+    // tableMax = table Max Dimension - 10 Seconds
+    tableMax = 192000 * bufferMax + offset;
+
+    // Phasor Function
+        LetrecPhasor(f) = Xn
+            letrec{
+                'Xn = (Xn+(f/ma.SR)) : frac;
+            };
+
+    frac(x) = x-floor(x);
+    // read section
+    // stretchFactor - 0 Normal / 1 Extreme stretch (Freeze)
+        stretch = LetrecPhasor( (1/bufferSec) - readStretch)
+            * readSection;
+    // Jitter Amount in the position for the reads
+    rnd = abs(noise(10667 * (i + 1)));
+    jitter = rnd * readJitter;
+    // position in the Buffer for the Reads
+    cntrlRead = (readOffset+stretch)-jitter : frac;
+    // L = buffer dimension in seconds
+    L = ma.SR * bufferSec;
+    // Write index - ramp 0 to L
+    wIdx = offset + ((+(1) : %(L)) ~ _) * record : int <: 
+        attach(_, _/L : hbargraph("[0]Write-Head %i",0,1));
+    buffer(p, x) = it.frwtable(3, tableMax, .0, wIdx, x, p);
+    // Hanning window Equation
+    hann(x) = sin(frac(x) * ma.PI) ^ 2.0;
+    // Grain in Milliseconds
+    grainms = 1000/grainDimMs : si.smoo;
+    // Position of the grain in the Buffer
+    bufPos = cntrlRead <: attach(_, _ : hbargraph("[1]Read-Head %i",0,1));
+    timePhase = offset + (bufPos * L);
+    // two Heads for the read
+    // 0°
+    ph1 = LetrecPhasor(grainms);
+    // 180* 
+    ph2 = ma.frac(.5 + ph1);
+    // Buffer positions = Position in the Buffer + Grain Read
+    pos1 = SAH(ph1, timePhase) + ph1*(ma.SR/grainms);
+    pos2 = SAH(ph2, timePhase) + ph2*(ma.SR/grainms);
+    // Windows + Buffer Reads
+    head1 = hann(ph1) * buffer(pos1);
+    head2 = hann(ph2) * buffer(pos2);
+};
+// process = timeStretcher(1, 1, 1, .1, .5, .1, .01, 80, 1), 
+//     timeStretcher(1, 1, 1, .1, .0, .1, .01, 80, 2);
+
+//----------------------------------------------------------------- SAMPLERS ---
+sampler(memSec, readSpeed, x) =
+    it.frwtable(
+                    3, // interpolation order
+                    192000 * (20), // max.SR * Seconds
+                    .0, // start Point
+                    ba.period(memSec * ma.SR), // writing index
+                    x, // input
+                    phasor(readSpeed/memSec) *
+                      memSec * ma.SR// external Reading index (0-1)
+                );
+
+chunkSampler(memSec, readSpeed, jumpFreq, chunkDim, seed, x) =
+    sampler * squareOut
+        with{
+            square = pwsquare(jumpFreq, chunkDim);
+            reader =  splicePH(readSpeed/memSec, seed, square);
+            readOut = reader : _, !, !;
+            squareOut = reader : !, _, !;
+            sampler =
+                it.frwtable(
+                    3, // interpolation order
+                    192000 * (20), // max.SR * Seconds
+                    .0, // start Point
+                    ba.period(memSec * ma.SR), // writing index
+                    x, // input
+                    readOut * memSec * ma.SR// external Reading index (0-1)
+                );
+        };
+//process = chunkSampler(4, 1, 8, .99, 2), chunkSampler(4, 1, 8, .99, 4);
+
+chunkGrains(voices, memSec, readSpeed, jumpFreq, chunkDim, x)=
+    par(i, voices,
+            chunkSampler(memSec, readSpeed, jumpFreq, chunkDim, i, x/voices)
+        ) :> (+,+);
+//process = _ <: chunkGrains(8, 4, 1, 4, .99);
+//pwg = hslider("slide",0,0,1,.001); ftg = hslider("freq.",0,0,100,.001);
+
+
+/************************************************************************
+************************************************************************
+- NETWORKS -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------- VECTORIAL OPERATIONS ---
+// perform operations on an arbitrary number of vectors
+vecOp(vectorsList, op) =
+    vectorsList : seq(i, vecDim - 1, vecOp2D , vecBus(vecDim - 2 - i))
+    with {
+        vecBus(0) = par(i, vecLen, 0 : !);
+        vecBus(dim) = par(i, dim, si.bus(vecLen));
+        vecOp2D = ro.interleave(vecLen, 2) : par(i, vecLen, op);
+        vecDim = outputs(vectorsList) / vecLen;
+        vecLen = outputs(ba.take(1, vectorsList));
+    };
+
+//----------------------------------------------------------------- MATRIXES ---
+// vector FDN Matrix
+vecMx(N, list) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list), *) :> +));
+
+vecMatrix(N) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+with{
+    list(1) = 1, 0, 0, 0;
+    list(2) = 0, 1, 0, 0;
+    list(3) = 0, 0, 1, 0;
+    list(4) = 0, 0, 0, 1;
+    list(5) = 1, 0, 0, 0;
+    list(6) = 0, 1, 0, 0;
+    list(7) = 0, 0, 1, 0;
+    list(8) = 0, 0, 0, 1;
+};
+//process = vecMatrix(4);
+
+// fully connected FDN Matrix
+fullyconnectedMx(N) =  vecMx(N, par(i, N, 1));
+fullyconnectedMxNormalized(N) =  vecMx(N, par(i, N, 1/N));
+//process = fullyconnectedMxNormalized(4);
+
+// hadamard FDN Matrix
+butterfly(2) = si.bus(2) <: +, -;
+butterfly(N) = si.bus(N) <: ro.interleave(N/2,2), ro.interleave(N/2,2) : par(i, N/2, +), par(i, N/2, -);
+hadamard(2) = butterfly(2);
+hadamard(N) = butterfly(N) : (hadamard(N/2), hadamard(N/2));
+//process = hadamard(8);
+
+// Normalized hadamard FDN Matrix
+hadamardcoeff(N) = par(i, N, 1.0 / sqrt(N)); 
+hadamardNormalized(N) = vecOp((hadamard(N) , hadamardcoeff(N)), *);
+//process = hadamardNormalized(8);
+
+//----------------------------------------------------------------- NETWORKS ---
+FDNfullyconnected(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (fullyconnectedMxNormalized(N));
+//process = FDNfullyconnected(4, 1, 1);
+
+FDNhadamard(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (hadamardNormalized(N));
+//process = FDNhadamard(4, 1, 1);
+
+FDNsingleLoop(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ ro.crossNM(N-1, 1);
+//process = FDNsingleLoop(8, 1, 1);
+
+FDNmatrix(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ (vectorMatrix(N))
+with{
+    vectorMatrix(N) = si.bus(N) <: 
+        par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+    with{
+        list(1) = 1, 0, 0, 0;
+        list(2) = 0, 1, 0, 0;
+        list(3) = 0, 0, 1, 0;
+        list(4) = 0, 0, 0, 1;
+        list(5) = 1, 0, 0, 0;
+        list(6) = 0, 1, 0, 0;
+        list(7) = 0, 0, 1, 0;
+        list(8) = 0, 0, 0, 1;
+    };
+};
+//process = FDNmatrix(4, 1, 1);
+
+
+/************************************************************************
+************************************************************************
+- AGENTS -
+************************************************************************
+************************************************************************/
+
+// N = voices, M = network inputs.
+FDNBP(N, M) = (netInsx : netNorm : netDCof : netLimt) ~ (agnt : matrix)
+with{
+    matrix = hadamardNormalized(N); // hadamard matrix
+    netInsx = vecOp((si.bus(N) , si.bus(N)), +); // ins + fbs
+    netNorm = par(i, N, RMSNorm(10, 10, .1, 10)); // norm + del
+    netLimt = par(i, N, LookaheadLimiter(.8)); // signal limit
+    agnt =  par(i, N, BPSVF(1, 200 + (i * 200))); // agents
+    netDCof = par(i, N, dcblocker); // dc blockers
+};
+//process = si.bus(2) <: si.bus(4) : FDNBP(4, 3);
+
+FDNB2(N, M) = (netInsx : netNorm : vDelays : netDCof : netLimt) ~ (agnt : matrix)
+with{
+    matrix = hadamardNormalized(N); // hadamard matrix
+    netInsx = vecOp((si.bus(N) , si.bus(N)), +); // ins + fbs
+    netNorm = par(i, N, RMSNorm(10, 10, .1, 10)); // norm + del
+    netLimt = par(i, N, LookaheadLimiter(.8)); // signal limit
+    netDCof = par(i, N, dcblocker); // dc blockers
+    vDelays = par(i, N, group(d(i))) // del
+    with{
+        group(x) = vgroup("Filters", x);
+        d(i) =  de.fdelay(192000 * 1, 
+                    si.smoo(hslider("DEL BP%i", i * .1579, 0, 1, .001) * 
+                        ma.SR));
+    };
+    agnt =  par(i, N, group(BPSVF(1, f(i)))) // agents
+    with{
+        group(x) = vgroup("Filters", x);
+        f(i) = si.smoo(hslider("FC BP%i", (i+1) * 200, 20, 10000, 1));
+    };
+};
+//process = si.bus(2) <: si.bus(4) : FDNB2(4, 3);
+
+FDNAP(N, M) = (netInsx : netNorm : netDCof : netLimt) ~ (agnt : matrix)
+with{
+    matrix = hadamardNormalized(N); // hadamard matrix
+    netInsx = vecOp((si.bus(N) , si.bus(N)), +); // ins + fbs
+    netNorm = par(i, N, RMSNorm(10, 10, .1, 10)); // norm + del
+    netLimt = par(i, N, LookaheadLimiter(.8)); // signal limit
+    agnt =  apfLattice(N, 10, 10, 400, 5, .5); // agents
+    netDCof = par(i, N, dcblocker); // dc blockers
+};
+//process = si.bus(2) <: si.bus(4) : FDNAP(4, 3); 
+
+FDNGN(N, M) = (netInsx : netNorm : netDCof : netLimt) ~ (agnt : matrix)
+with{
+    matrix = hadamardNormalized(N); // hadamard matrix
+    netInsx = vecOp((si.bus(N) , si.bus(N)), +); // ins + fbs
+    netNorm = par(i, N, RMSNorm(10, 10, .1, 10)); // norm + del
+    netLimt = par(i, N, LookaheadLimiter(.8)); // signal limit
+    netDCof = par(i, N, dcblocker); // dc blockers
+    agnt =  par(i, N, group(timeStretcher(
+        30, 30, rec, 1, 1, 0, rdjitter(i), grainDim(i), (i+1))
+                )) // agents
+    with{
+        group(x) = vgroup("Granulators", x);
+        rec = 1 - checkbox("rec stop");
+        rdjitter(i) = si.smoo(hslider("Jitter %i [unit:lin]", .5, .0, 1, .001));
+        grainDim(i) = si.smoo(1000 * hslider("GrainDim %i [unit:sec]", 10, .001, 10, .001));
+    };
+};
+//process = si.bus(2) <: si.bus(4) : FDNGN(4, 3); 
+
+FDNG2(N, M) = (netInsx : netNorm : netDCof : netLimt) ~ (agnt : matrix)
+with{
+    matrix = hadamardNormalized(N); // hadamard matrix
+    netInsx = vecOp((si.bus(N) , si.bus(N)), +); // ins + fbs
+    netNorm = par(i, N, RMSNorm(10, 10, .1, 10)); // norm + del
+    netLimt = par(i, N, LookaheadLimiter(.8)); // signal limit
+    agnt =  par(i, N, hgroup("Granulators", 
+                    granular_sampling((i+1), 10, 2))); // agents
+    netDCof = par(i, N, dcblocker); // dc blockers
+};
+//process = si.bus(2) <: si.bus(4) : FDNG2(4, 3); 
