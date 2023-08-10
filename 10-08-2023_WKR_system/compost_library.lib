@@ -1,0 +1,630 @@
+declare name "WKR Compost Library";
+declare author "Luca Spanedda";
+declare author "Dario Sanfilippo";
+declare version "1.0";
+declare description "2023";
+declare copyright "Copyright (C) 2023 Luca Spanedda <lucaspanedda1995@gmail.com>";
+declare license "MIT license";
+// Import the standard Faust Libraries
+import("stdfaust.lib");
+// Import Lists
+primes = component("prime_numbers.dsp").primes;
+primesThousands = component("prime_numbers.dsp").primesThousands;
+
+
+/************************************************************************
+************************************************************************
+- BASIC -
+************************************************************************
+************************************************************************/
+
+
+// constants values
+PI = ma.PI;
+TWOPI = 2.0 * PI;
+SR = ma.SR;
+EPS = ma.EPSILON;
+NY = SR / 2.0;
+T = 1.0 / SR;
+PIT = PI * T;
+TWOPIT = TWOPI * T;
+MS2T(t) = (t / 1000) * ma.SR;
+
+// limit function for library and system
+limit(maxl, minl, x) = max(minl, min(maxl, x));
+
+info(i, lower, upper) = 
+    _ <: _, vbargraph(" %i [style:numerical]", lower, upper) : attach;
+infoScale(i, lower, upper) = 
+    _ <: _, (_ * 1000 : vbargraph(" %i [style:numerical]", lower * 1000, upper * 1000)) : attach;
+
+// binary selector 0 - 1
+selector(sel, x, y) = ( x * (1 - sel) + y * (sel) );
+
+// index of the primes numbers
+primeNumbers(index) = ba.take(index , list)
+    with{
+        list = primes;
+        };
+
+    
+/************************************************************************
+************************************************************************
+- MAPPING -
+************************************************************************
+************************************************************************/
+
+// bipolar -1/+1 to unipolar 0/1 
+biToUni(x) = (x + 1) / 2;
+
+// accept 0/1 
+map(minL, maxL, x) = x * (maxL - minL) + minL;
+
+
+/************************************************************************
+************************************************************************
+- SIGNALS GENERATION -
+************************************************************************
+************************************************************************/
+
+// pseudo-random noise with linear congruential generator (LCG)
+noise(initSeed) = LCG ~ _ : (_ / m)
+with{
+    // initSeed = an initial seed value
+    a = 18446744073709551557; // a large prime number, 
+        // such as 18446744073709551557
+    c = 12345; // a small prime number, such as 12345
+    m = 2 ^ 31; // 2.1 billion
+    // linear_congruential_generator
+    LCG(seed) = ((a * seed + c) + (initSeed - initSeed') % m);
+};
+
+multinoise(N) = par(i, N, noise(ba.take(i + 1, primes)));
+
+// Letrec Phasor
+phasorLetrec(f) = Xn
+letrec{
+    'Xn = (Xn + (f / ma.SR)) : frac;
+}
+with{
+    frac(x) = x-floor(x);
+};
+
+
+/************************************************************************
+************************************************************************
+- FILTERS -
+************************************************************************
+************************************************************************/
+
+//--------------------------------------------- ONEZERO FILTER (FIR of I° Order)
+// (g) = give amplitude 0-1(open-close) to the delayed signal 
+// (g) = +1 lowpass, (g) = -1 highpass
+ozf(g, x) = (x' * g), x :> +;
+
+//--------------------------------------- ONEPOLE FILTER (IIR of 1 sample delay)
+// only the pole section
+pole(g) = + ~ * (g);
+
+//--------------------------------------------------------------- ALLPASS FILTER
+// (t, g) = give: delay in samples, feedback gain 0-1
+apf(del, g, x) = x : (+ : _ <: @(del  - 1), *(g))~ *(-g) : mem, _ : + : _;
+
+// APF Time Variant
+sdelay(maxDelay, interpolationLen, delayLen, x) = 
+    loop ~ si.bus(4) : (! , ! , ! , ! , _)
+    with {
+        loop(lineState, incrState, lowerDelayState, upperDelayState) = 
+            line , incr , lowerDelay , upperDelay , output
+            with {
+                lowerReach = lineState == 0;
+                upperReach = lineState == 1;
+                lowerDelayChange = delayLen != lowerDelayState;
+                upperDelayChange = delayLen != upperDelayState;
+                incr = ba.if(   upperReach & upperDelayChange,
+                                -1.0 / interpolationLen,
+                                ba.if(  lowerReach & lowerDelayChange),
+                                        1.0 / interpolationLen,
+                                        incrState);
+                line = max(.0, min(1.0, lineState + incr));
+                lowerDelay = ba.if(upperReach, delayLen, lowerDelayState);
+                upperDelay = ba.if(lowerReach, delayLen, upperDelayState);
+                lowerDelayline = de.delay(maxDelay, lowerDelay, x) * (1.0 - line);
+                upperDelayline = de.delay(maxDelay, upperDelay, x) * line;
+                output = lowerDelayline + upperDelayline;
+            };
+    };
+
+allpassWerner(maxDel, intTime, del, g, x) = (loop : sdelay(maxDel, intTime, del - 1)) ~ _ : mem * D_g + x * g
+    with {
+        D_g = sqrt(1 - g * g);
+        loop(fb) = x * D_g - g * fb;
+    };
+
+AllpassWernerCascade(M, maxDel, intTime, d, g, x) = x : seq(i, M, allpassWerner(maxDel, intTime, d * (sqrt((i + 1) / M) - sqrt(i / M)), g));
+
+
+//---------------------------------------------------------------------- SVF TPT
+// SVFTPT filter function
+// TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+SVFTPT(Q, cf, x) = loop ~ si.bus(2) : (! , ! , _ , _ , _ , _ , _)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        R = 1.0 / (2.0 * Q);
+        G1 = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        G2 = 2.0 * R + g;
+        loop(s1, s2) = u1 , u2 , lp , hp , bp * 2.0 * R , x - bp * 4.0 * R , bp
+            with {
+                hp = (x - s1 * G2 - s2) * G1;
+                v1 = hp * g;
+                bp = s1 + v1;
+                v2 = bp * g;
+                lp = s2 + v2;
+                u1 = v1 + bp;
+                u2 = v2 + lp;
+            };
+    };
+
+LPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (_ , ! , ! , ! , !);
+
+HPSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , _ , ! , ! , !);
+
+BPSVF(Q, cf, x) = SVFTPT(Q, limit(20000, 20, cf), x) : (! , ! , _ , ! , !);
+
+NotchSVF(Q, cf, x) = x - BPSVF(Q, limit(20000, 20, cf), x);
+
+APSVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , _ , !);
+
+PeakingSVF(Q, cf, x) = LPSVF(Q, cf, x) - HPSVF(Q, cf, x);
+
+BP2SVF(Q, cf, x) = SVFTPT(Q, cf, x) : (! , ! , ! , ! , _);
+
+BPBWSVF(BW, CF, x) = BPSVF(limit(20000, minimum, (CF / BW)), CF, x);
+
+// Zavalishin's SVF BP FILTER
+// optimized BP from the TPT version of the SVF Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+BPSVFTPT(glin, bw, cf, x) = loop ~ si.bus(2) : (! , ! , _)
+    with {
+        g = tan(cf * ma.PI * (1.0/ma.SR));
+        Q = cf / max(EPS, bw);
+        R = 1.0 / (Q + Q);
+        G = 1.0 / (1.0 + 2.0 * R * g + g * g);
+        loop(s1, s2) = u1 , u2 , bp * glin
+            with {
+                bp = (g * (x - s2) + s1) * G;
+                bp2 = bp + bp;
+                v2 = bp2 * g;
+                u1 = bp2 - s1;
+                u2 = v2 + s2;
+            };
+    };
+
+//------------------------------------------------------------------ ONEPOLE TPT
+// Zavalishin Onepole TPT Filter
+// TPT version of the One-Pole Filter by Vadim Zavalishin
+// reference : (by Will Pirkle)
+// http://www.willpirkle.com/Downloads/AN-4VirtualAnalogFilters.2.0.pdf
+onePoleTPT(cf, x) = loop ~ _ : ! , si.bus(3)
+    with {
+        g = tan(cf * ma.PI * ma.T);
+        G = g / (1.0 + g);
+        loop(s) = u , lp , hp , ap
+            with {
+            v = (x - s) * G; u = v + lp; lp = v + s; hp = x - lp; ap = lp - hp;
+            };
+    };
+
+// Lowpass  TPT
+LPTPT(cf, x) = onePoleTPT(cf, x) : (_ , ! , !);
+
+// Highpass TPT
+HPTPT(cf, x) = onePoleTPT(cf, x) : (! , _ , !);
+
+// Allpass TPT
+APTPT(cf, x) = onePoleTPT(cf, x) : (!, !, _);
+
+//-------------------------------------------------------------- BUTTERWORTH ---
+butterworthQ(order, stage) = qFactor(order % 2)
+    with {
+        qFactor(0) = 1.0 / (2.0 * cos(((2.0 * stage + 1) *
+        (ma.PI / (order * 2.0)))));
+        qFactor(1) = 1.0 / (2.0 * cos(((stage + 1) * (ma.PI / order))));
+    };
+
+LPButterworthN(1, cf, x) = LPTPT(cf, x);
+LPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, LPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : LPTPT(cf) : seq(i, (N - 1) / 2,
+        LPSVF(butterworthQ(N, i), cf));
+    };
+
+HPButterworthN(1, cf, x) = HPTPT(cf, x);
+HPButterworthN(N, cf, x) = cascade(N % 2)
+    with {
+        cascade(0) = x : seq(i, N / 2, HPSVF(butterworthQ(N, i), cf));
+        cascade(1) = x : HPTPT(cf) : seq(i, (N - 1) /
+        2, HPSVF(butterworthQ(N, i), cf));
+    };
+    
+//------------------------------------------------------------------- DC BLOCKER
+// https://ccrma.stanford.edu/~jos/fp/DC_Blocker.html
+dcblocker(ozfc, polefc, x) = x : ozf(ozfc) : pole(polefc);
+
+
+/************************************************************************
+************************************************************************
+- AUDIO INFORMATION PROCESSING -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------------------- MAX PEAK ---
+// references: 1, 2
+// Peak Max with IIR filter and max comparison
+peakmax(x) = loop ~_
+with{
+    loop(y) = abs(x) , y : max;
+};
+//process = _ : peakmax;
+
+//--------------------------------------------------- MAX PEAK NORMALIZATION ---
+// references: 5
+// Peak Max Normalization
+fixedNorm(x) = 1 / (x : loop ~ _) * x
+with{
+    loop(y,z) = ( (y, abs(z) ) : max);
+};
+//process = _ * .2 : fixedNorm;
+
+//--------------------------------------------------- PEAK ENVELOPE FOLLOWER ---
+peakenvelope(period, x) = loop ~ _
+    with {
+        loop(y) = max(abs(x), y * coeff);
+        twoPIforT = (2.0 * ma.PI) * (1.0 / ma.SR);
+        coeff = exp(-twoPIforT / max(EPS, period));
+    };
+
+// Peak envelope. with attack and decay
+peakEnvAttRel(att, rel, x) = peakenvelope(rel - att, x) : 
+    LPTPT(1.0 / max(EPS, att));
+
+//----------------------------------------- MOVING AVERAGE ENVELOPE FOLLOWER ---
+movingAverage(seconds, x) = x - x@(seconds * ma.SR) : 
+    fi.pole(1.0) / (seconds * ma.SR);
+//process = _ * 10 : movingAverage(1);
+
+//------------------------------------------------------- MOVING AVERAGE RMS ---
+movingAverageRMS(seconds, x) = sqrt(max(0, movingAverage(seconds, x ^ 2)));
+//process = movingAverageRMS(1);
+
+//-------------------------------------------------------------- PEAK HOLDER ---
+// holdTime in Seconds
+peakHolder(holdTime, x) = loop ~ si.bus(2) : ! , _
+with {
+    loop(timerState, outState) = timer , output
+    with {
+        isNewPeak = abs(x) >= outState;
+        isTimeOut = timerState >= (holdTime * ma.SR - 1);
+        bypass = isNewPeak | isTimeOut;
+        timer = ba.if(bypass, 0, timerState + 1);
+        output = ba.if(bypass, abs(x), outState);
+    };
+};
+
+
+//----------------------------------------------- ATTACK DECAY - RMS AVERAGE ---
+// references: 3
+RMS(att, rel, x) = loop ~ _ : sqrt
+    with {
+        loop(y) = (1.0 - coeff) * x * x + coeff * y
+            with {
+                attCoeff = exp(-2.0 * ma.PI * ma.T / att);
+                relCoeff = exp(-2.0 * ma.PI * ma.T / rel);
+                coeff = ba.if(abs(x) > y, attCoeff, relCoeff);
+            };
+    };
+
+
+//--------------------------------------------------------- DYNAMIC LIMITERS ---
+// lookahead limiter with: peakHolder, lowpass & peakenvelope
+// All the credits of the original version goes to Dario Sanfilippo 
+LookaheadLimiter(threshold, holdSec, decaySec, x) = 
+    (x : peakHolder(holdSec) : LPTPT(1/holdSec) : peakenvelope(decaySec)) : 
+        (min(1, threshold) / max(1, _)) * 
+            (x @ (holdSec * ma.SR)); 
+
+//------------------------------------------------------ DYNAMIC COMPRESSION ---
+dynamiComp(i, k, att, rel, exponent, x) = 
+vgroup("dynaComp %i", (x * scaling) : hgroup("out %i", infoScale(k, -100, 100)))
+    with {
+        complement(x) = 1.0 - x;
+        clipUni(x) = max(0.0, min(1.0, x));
+        scaling = ma.tanh(x) : peakEnvAttRel(att, rel) : 
+            clipUni : complement : pow(exponent : hgroup("exp %i", infoScale(k, -100, 100)));
+    };  
+
+
+//------------------------------------------------------------ PITCH TRACKER ---
+// averaging function with 2pi time constant; t is the averaging time in seconds
+avg(t, x) = y
+    letrec {
+        'y = x + alpha * (y - x);
+    }
+        with {
+            alpha = exp((-2.0 * ma.PI * ma.T) / t);
+        };
+
+// zero-crossing indicator function
+zeroCrossing(x) = (x * x') < 0;
+
+// zero-crossing rate
+zeroCrossingRate(t, x) = zeroCrossing(x) : avg(t);
+
+// pitch tracker as zero-crossing rate of self-regulating lowpassed inputs
+// we highpass the input to avoid infrasonic
+// components to affect the measurements
+// we then clip the lowpass cutoff to improve stability
+pitchTracker(t, x) = loop ~ _
+    with {
+        loop(y) = fi.lowpass(4, max(80, y), xHighpassed) :
+                  (zeroCrossingRate(t) * ma.SR * .5)
+            with {
+                xHighpassed = fi.highpass(1, 20, x);
+            };
+    };
+
+// Resonant Frequency Suppressor
+resonKill(bypass, T, Q, x) = out
+with{
+    FC = pitchTracker(T, x);
+    filter = x - BPSVF(Q, FC, x);
+    out = filter * (1 - bypass) + x * bypass;
+};
+
+
+//---------------------------------------------------------------- LOCAL MAX ---
+localMax(seconds, x) = loop ~ si.bus(4) : _ , ! , ! , !
+with {
+    loop(yState, timerState, peakState, timeInSamplesState) = 
+        y , timer , peak , timeInSamples
+    with {
+        timeInSamples = ba.if(reset + 1 - 1', limit(1000, 0, seconds) * 
+            ma.SR, timeInSamplesState);
+        reset = timerState >= (timeInSamplesState - 1);
+        timer = ba.if(reset, 1, timerState + 1);
+        peak = max(abs(x), peakState * (1.0 - reset));
+        y = ba.if(reset, peak', yState);
+    };
+};
+// process = localMax(4);
+
+//---------------------------------------------------------- SAMPLE AND HOLD ---
+// SAH circuit
+SAH(ph, y) = \(FB).( selector( ph : \(x).(x < x'), FB, y ) )~ _ ;
+
+
+/************************************************************************
+************************************************************************
+- READ & WRITE TABLES -
+************************************************************************
+************************************************************************/
+
+//-------------------------------------------- TIMESTRETCHING2 (OLA 2 HEADS) ---
+// Timestretcher - sum of the 2 Head Reads
+// Bufpos = 0 to 1 signals for the reads
+Stretcher(bufferMax, bufferSec, record, readSection, readOffset, readStretch, grainDims, i, jittin, freqShift, x) = 
+x <: head1 + head2 
+with{
+    offset = 2;
+    // tableMax = table Max Dimension - 10 Seconds
+    tableMax = 192000 * bufferMax + offset;
+    frac(x) = x-floor(x);
+    // read section
+    // stretchFactor - 0 Normal / 1 Extreme stretch (Freeze)
+        stretch = phasorLetrec( (1/bufferSec) - readStretch)
+            * readSection;
+    // Jitter Amount in the position for the reads
+    rnd = abs(noise((10667 * i) + 10667));
+    jitter = jittin * rnd;
+    // position in the Buffer for the Reads
+    cntrlRead = (readOffset + stretch) - jitter : frac;
+    // L = buffer dimension in seconds
+    L = ma.SR * bufferSec;
+    // Write index - ramp 0 to L
+    wIdx = offset + ((+(1) : %(L)) ~ _) * record : int; 
+    // <: vgroup("Write", attach(_, _/L : hbargraph(" %i [style:numerical]",0,1)));
+    buffer(p, x) = it.frwtable(3, tableMax, .0, wIdx, x, p);
+    // Hanning window Equation
+    hann(x) = sin(frac(x) * ma.PI) ^ 2.0;
+    // Grain in Milliseconds
+    grainms = 1 / grainDims : si.smoo;
+    // Position of the grain in the Buffer
+    bufPos = cntrlRead;
+    // <: vgroup("Read", attach(_, _ : hbargraph(" %i [style:numerical]",0,1)));
+    timePhase = offset + (bufPos * L);
+    // two Heads for the read
+    // 0°
+    ph1 = phasorLetrec(grainms * freqShift);
+    // 180* 
+    ph2 = ma.frac(.5 + ph1);
+    // Buffer positions = Position in the Buffer + Grain Read
+    pos1 = SAH(ph1, timePhase) + ph1*(ma.SR/grainms);
+    pos2 = SAH(ph2, timePhase) + ph2*(ma.SR/grainms);
+    // Windows + Buffer Reads
+    head1 = hann(ph1) * buffer(pos1);
+    head2 = hann(ph2) * buffer(pos2);
+};
+
+
+/************************************************************************
+************************************************************************
+- NETWORKS -
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------- VECTORIAL OPERATIONS ---
+// perform operations on an arbitrary number of vectors
+vecOp(vectorsList, op) =
+    vectorsList : seq(i, vecDim - 1, vecOp2D , vecBus(vecDim - 2 - i))
+    with {
+        vecBus(0) = par(i, vecLen, 0 : !);
+        vecBus(dim) = par(i, dim, si.bus(vecLen));
+        vecOp2D = ro.interleave(vecLen, 2) : par(i, vecLen, op);
+        vecDim = outputs(vectorsList) / vecLen;
+        vecLen = outputs(ba.take(1, vectorsList));
+    };
+
+//----------------------------------------------------------------- MATRIXES ---
+// vector FDN Matrix
+vecMx(N, list) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list), *) :> +));
+
+vecMatrix(N) = si.bus(N) <: par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+with{
+    list(1) = 1, 0, 0, 0;
+    list(2) = 0, 1, 0, 0;
+    list(3) = 0, 0, 1, 0;
+    list(4) = 0, 0, 0, 1;
+    list(5) = 1, 0, 0, 0;
+    list(6) = 0, 1, 0, 0;
+    list(7) = 0, 0, 1, 0;
+    list(8) = 0, 0, 0, 1;
+};
+
+// fully connected FDN Matrix
+fullyconnectedMx(N) =  vecMx(N, par(i, N, 1));
+fullyconnectedMxNormalized(N) =  vecMx(N, par(i, N, 1/N));
+
+// hadamard FDN Matrix
+butterfly(2) = si.bus(2) <: +, -;
+butterfly(N) = si.bus(N) <: ro.interleave(N/2,2), ro.interleave(N/2,2) : par(i, N/2, +), par(i, N/2, -);
+hadamard(2) = butterfly(2);
+hadamard(N) = butterfly(N) : (hadamard(N/2), hadamard(N/2));
+
+// Normalized hadamard FDN Matrix
+hadamardcoeff(N) = par(i, N, 1.0 / sqrt(N)); 
+hadamardNormalized(N) = vecOp((hadamard(N) , hadamardcoeff(N)), *);
+
+//----------------------------------------------------------------- NETWORKS ---
+FDNfullyconnected(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (fullyconnectedMxNormalized(N));
+
+FDNhadamard(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~
+        (hadamardNormalized(N));
+
+FDNsingleLoop(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ ro.crossNM(N-1, 1);
+
+FDNmatrix(N, D, G) = (vecOp((si.bus(N) , si.bus(N)), +) : 
+    vecOp((si.bus(N), par(i, N, D * ma.SR - 1)), @)) ~ (vectorMatrix(N))
+with{
+    vectorMatrix(N) = si.bus(N) <: 
+        par(i, N, (vecOp((si.bus(N), list(i+1)), *) :> +))
+    with{
+        list(1) = 1, 0, 0, 0;
+        list(2) = 0, 1, 0, 0;
+        list(3) = 0, 0, 1, 0;
+        list(4) = 0, 0, 0, 1;
+        list(5) = 1, 0, 0, 0;
+        list(6) = 0, 1, 0, 0;
+        list(7) = 0, 0, 1, 0;
+        list(8) = 0, 0, 0, 1;
+    };
+};
+
+
+/************************************************************************
+************************************************************************
+- NONLINEARITIES - 
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------------- NONLINEARITIES ---
+controlSignalProcessing(i, k, exponent, responseTime, x) = vgroup("cntrlSig %i",
+    xAverageSign * pow(abs(xAverageNormalisedSaturated) * .9, exponent) : hgroup("cntrl %i", infoScale(k, -1, 1)) :
+        os.osc : hgroup("cntrl Osc %i", infoScale(k, -1, 1))
+            : SAHDiffInvertion  : si.smoo : hgroup("cntrl Sah %i", infoScale(k, -1, 1))
+)
+with {
+    xAverage = x : seq(i, 4, LPTPT(1.0 / responseTime));
+    xAverageRMS = xAverage * xAverage : seq(i, 4, LPTPT(1.0 / (10.0 * responseTime))) : sqrt;
+    xAverageNormalised = xAverage / max(EPS, xAverageRMS);
+    xAverageNormalisedSaturated = ma.tanh(xAverageNormalised);
+    xAverageSign = ma.signum(xAverage);
+};
+
+//------------------------------------------------------- SAH DIFF INVERSION ---
+/*  Sample-and-hold signals whose slope changes sign over a certain 
+    period/ */
+SAHDiffInvertion(x) = loop ~ _
+    with {
+        loop(y) = ba.if(nonZeroDiff * nonZeroDiff' < .0, x, y);
+        nonZeroDiff = ba.sAndH(abs(diff(x)) > EPS, diff(x));
+        diff(x) = x - x';
+    };
+
+//----------------------------------------------------------- RELAY HYSTERON ---
+hysteron(alpha, beta, x) = loop ~ _
+    with {
+        loop(y) = ba.if(x < alpha, .0, ba.if(x > beta, 1.0, y));
+    };  
+
+
+/************************************************************************
+************************************************************************
+- POPULATION GROWTH MODEL (termic model) - 
+************************************************************************
+************************************************************************/
+
+//----------------------------------------------------------- ENERGY AVERAGE ---
+energy(xg, t, x) = avg(t, x * x * xg)
+with {
+    avg(t, x) = onepole(1.0 / t, x) : ba.selectn(3, 0);
+    onepole(cf, x) = loop ~ _ : ! , si.bus(3)
+    with {
+        g = tan(cf * PI * T);
+        G = g / (1.0 + g);
+        Ghp = 1.0 - G;
+        Gap = G + G - 1.0;
+        loop(s) = u , lp , hp , ap
+            with {
+                u = v + v + s;
+                v0 = x - s;
+                hp = Ghp * v0;
+                v = G * v0;
+                lp = v + s;
+                ap = lp - hp;
+            };
+    };
+};
+
+//---------------------------------------------------- COMPOST TERMIC CURVES ---
+warpedSine(a, b, c, d, x) = a * pow((1.0 + sin(ph)) / 2.0, b)
+    with {
+        ph = TWOPI * (min(1.0, x + d) ^ c + .75);
+    };
+// show windows
+//process = os.phasor(1, 4) <: warpedSine(3, 2, 5, 0) , warpedSine(2, 1.2, 4, .24) , warpedSine(1, 1, 6, .55);
+
+//-------------------------------------------------------- POPULATION GROWTH ---
+populationGrowth(i, G, E) =  _ * a0Activation, _ * a1Activation, _ * a2Activation, _ * a3Activation 
+    with {
+                curve(0) = warpedSine(3, 2, 5, 0);
+                curve(1) = warpedSine(2, 1.2, 4, .24);
+                curve(2) = warpedSine(1, 1, 6, .55);
+                Temp = hgroup("Energy Average", E : ma.tanh : info(i, -1, 1));
+                generationIndex = Temp : curve(i);
+                isInReproductionCondition = 
+                    hysteron(.001, .1, generationIndex) * 2.0 - 1.0;
+                reproductionClock = isInReproductionCondition : 
+                    \(state).(max(0, +(state))) ~ _;
+                a0Activation = 1 : hgroup("Active 0", info(i, 0, 1));
+                a1Activation = hysteron(SR, SR * 2, reproductionClock) : hgroup("Active 1", info(i, 0, 1));
+                a2Activation = hysteron(SR * 2, SR * 3, reproductionClock) : hgroup("Active 2", info(i, 0, 1));
+                a3Activation = hysteron(SR * 3, SR * 4, reproductionClock) : hgroup("Active 3", info(i, 0, 1));
+    };
