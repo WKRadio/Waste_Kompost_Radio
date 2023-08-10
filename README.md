@@ -7,13 +7,16 @@ WKR is a constant radio flow of composting sound. The sounds are processed throu
 ```bash
 tree
 .
-└── compost_library.lib
-    └── compost_bioagents.dsp
-        └── compost_network.lib
+└── prime_numbers.dsp
+    └── compost_library.lib
+        └── compost_networks.dsp
 ```
 
 ## Compile
 
 ```bash
-$ faust -sd -sn -svg compost_network.dsp
+$ faust2juce -double compost_networks.dsp
+```
+```bash
+$ faust -sd -sn -svg compost_networks.dsp
 ```
